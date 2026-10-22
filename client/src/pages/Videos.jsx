@@ -17,6 +17,12 @@ import {
 import API from '../lib/api';
 import VideoCard from '../components/VideoCard';
 import { useSettings } from '../context/SettingsContext';
+import defaultVideos from '../data/defaultVideos.json';
+
+// Derive initial categories from default videos
+const defaultCategories = Array.from(
+  new Set(defaultVideos.map((v) => v.category).filter(Boolean))
+).sort();
 
 // ─── Animation variants ────────────────────────────────────────────────────────
 const containerVariants = {
@@ -81,43 +87,36 @@ function computeRelevance(video, queryTokens, rawQuery) {
 
 export default function Videos() {
   const { settings } = useSettings();
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories] = useState(defaultCategories);
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('default'); // 'default' | 'title' | 'latest'
   const [visibleCount, setVisibleCount] = useState(24);
-  const [videos, setVideos] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [videos, setVideos] = useState(defaultVideos);
+  const [loading, setLoading] = useState(false);
 
   const searchInputRef = useRef(null);
 
   const youtubeUrl = settings.youtubeChannel || 'https://www.youtube.com/@AlhassanWielaPh.D';
 
-  // Fetch all videos and categories on mount
+  // Fetch all videos and categories on mount (refreshes in background if server has newer entries)
   useEffect(() => {
     const fetchData = async () => {
-      setLoading(true);
       try {
         const [videosRes, catsRes] = await Promise.allSettled([
           API.get('/videos'),
           API.get('/videos/categories'),
         ]);
 
-        if (videosRes.status === 'fulfilled') {
-          const list = Array.isArray(videosRes.value.data)
-            ? videosRes.value.data
-            : videosRes.value.data?.videos ?? [];
-          setVideos(list);
+        if (videosRes.status === 'fulfilled' && Array.isArray(videosRes.value.data) && videosRes.value.data.length > 0) {
+          setVideos(videosRes.value.data);
         }
 
-        if (catsRes.status === 'fulfilled') {
-          const cats = Array.isArray(catsRes.value.data) ? catsRes.value.data : [];
-          setCategories(cats);
+        if (catsRes.status === 'fulfilled' && Array.isArray(catsRes.value.data) && catsRes.value.data.length > 0) {
+          setCategories(catsRes.value.data);
         }
       } catch (err) {
-        console.error('Failed to load video library:', err);
-      } finally {
-        setLoading(false);
+        console.warn('API sync completed with local cached videos:', err.message);
       }
     };
     fetchData();

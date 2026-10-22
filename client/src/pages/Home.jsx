@@ -28,6 +28,8 @@ import VideoCard from '../components/VideoCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 import { useSettings } from '../context/SettingsContext';
+import defaultVideos from '../data/defaultVideos.json';
+import defaultPortfolio from '../data/defaultPortfolio.json';
 
 // ─── Animation helpers ────────────────────────────────────────────────────────
 const fadeUp = (delay = 0) => ({
@@ -60,16 +62,17 @@ function DotGrid() {
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Home() {
   const { settings } = useSettings();
-  const [videos, setVideos] = useState([]);
-  const [publicationCount, setPublicationCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [videos, setVideos] = useState(defaultVideos.slice(0, 3));
+  const [publicationCount, setPublicationCount] = useState(
+    defaultPortfolio.filter((i) => (i.type || '').toLowerCase() === 'publication').length || 10
+  );
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
       try {
-        setLoading(true);
         const [videosRes, portfolioRes] = await Promise.allSettled([
           API.get('/videos', {
             params: { limit: 3 },

@@ -1,0 +1,20 @@
+[
+  {
+    "id": 7,
+    "title": "Gaziantep University Outstanding Engineering Research Recognition",
+    "type": "award",
+    "description": "Awarded for groundbreaking contributions in control engineering modeling and smart energy algorithms.",
+    "link": "",
+    "year": 2022,
+    "created_at": "2026-10-22 18:23:18"
+  },
+  {
+    "id": 6,
+    "title": "Robust Nonlinear Control Systems for Induction Motors and High-Capacity Power Converters",
+    "type": "publication",
+    "description": "Doctoral research monograph at Gaziantep University exploring observer-based control, parameter estimation, and efficiency optimization in electrical drives.",
+    "link": "https://www.youtube.com/@AlhassanWielaPh.D",
+    "year": 2022,
+    "created_at": "2026-10-22 18:23:18"
+  }
+]

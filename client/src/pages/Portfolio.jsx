@@ -15,6 +15,9 @@ import {
   Filter,
 } from 'lucide-react';
 import API from '../lib/api';
+import defaultPortfolio from '../data/defaultPortfolio.json';
+
+const defaultTypes = Array.from(new Set(defaultPortfolio.map((i) => i.type).filter(Boolean))).sort();
 
 // ─── Type Icon & Colors ────────────────────────────────────────────────────────
 const TYPE_CONFIG = {
@@ -74,12 +77,12 @@ const cardVariants = {
 };
 
 export default function Portfolio() {
-  const [types, setTypes] = useState([]);
+  const [types, setTypes] = useState(defaultTypes);
   const [activeType, setActiveType] = useState('All');
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(defaultPortfolio);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loadingTypes, setLoadingTypes] = useState(true);
-  const [loadingItems, setLoadingItems] = useState(true);
+  const [loadingTypes, setLoadingTypes] = useState(false);
+  const [loadingItems, setLoadingItems] = useState(false);
 
   // Fetch portfolio types
   useEffect(() => {
