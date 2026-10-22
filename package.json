@@ -1,0 +1,24 @@
+{
+  "name": "dr-alhassan-website",
+  "version": "1.0.0",
+  "description": "Official Academic & Research Portfolio Website for Dr. Alhassan Osman (UMaT)",
+  "main": "server/index.js",
+  "scripts": {
+    "postinstall": "npm run install:server && npm run install:client && npm run build",
+    "install:server": "cd server && npm install",
+    "install:client": "cd client && npm install",
+    "build": "cd client && npm run build",
+    "start": "node server/index.js",
+    "server": "cd server && npm start",
+    "client": "cd client && npm run dev"
+  },
+  "keywords": [
+    "academic-portfolio",
+    "umat",
+    "control-engineering",
+    "smart-grids",
+    "dr-alhassan"
+  ],
+  "author": "Dr. Alhassan Osman",
+  "license": "ISC"
+}
