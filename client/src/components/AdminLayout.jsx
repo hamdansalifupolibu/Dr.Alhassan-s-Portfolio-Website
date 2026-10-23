@@ -66,8 +66,8 @@ export default function AdminLayout({ children }) {
         {/* Brand Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="relative h-10 w-10 rounded-xl overflow-hidden ring-2 ring-emerald-500/50 shadow-md shadow-emerald-500/20 shrink-0">
-              <img src="/logo.jpg" alt="Dr. Alhassan" className="w-full h-full object-cover" />
+            <div className="relative h-10 w-10 rounded-xl overflow-hidden ring-2 ring-emerald-500/50 shadow-md shadow-emerald-500/20 shrink-0 bg-white p-0.5">
+              <img src="/logo.jpg" alt="Dr. Alhassan" className="w-full h-full object-contain" />
             </div>
             <div className="leading-tight">
               <p className="text-sm font-bold text-slate-900 dark:text-white">Dr. Alhassan</p>

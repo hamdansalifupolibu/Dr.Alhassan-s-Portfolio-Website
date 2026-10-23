@@ -17,8 +17,8 @@ export default function Footer() {
           {/* Brand */}
           <div>
             <Link to="/" className="flex items-center gap-3 mb-3 group">
-              <div className="w-10 h-10 rounded-2xl overflow-hidden ring-1 ring-emerald-500/40 shadow-sm shrink-0">
-                <img src="/logo.jpg" alt={shortName} className="w-full h-full object-cover" />
+              <div className="w-10 h-10 rounded-2xl overflow-hidden ring-1 ring-emerald-500/40 shadow-sm shrink-0 bg-white p-0.5">
+                <img src="/logo.jpg" alt={shortName} className="w-full h-full object-contain" />
               </div>
               <span className="font-extrabold text-slate-900 dark:text-white text-base group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
                 {shortName}

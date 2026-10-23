@@ -47,11 +47,11 @@ export default function Navbar() {
         <div className="flex items-center justify-between h-16 sm:h-20">
           {/* Brand Logo & Name */}
           <Link to="/" className="flex items-center gap-3 group">
-            <div className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-2xl overflow-hidden ring-2 ring-emerald-500/40 shadow-md shadow-emerald-500/20 group-hover:ring-emerald-400 group-hover:scale-105 transition-all shrink-0">
+            <div className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-2xl overflow-hidden ring-2 ring-emerald-500/40 shadow-md shadow-emerald-500/20 group-hover:ring-emerald-400 group-hover:scale-105 transition-all shrink-0 bg-white p-0.5">
               <img
                 src="/logo.jpg"
                 alt={brandName}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             </div>
             <div className="leading-tight">
