@@ -2,6 +2,13 @@ import { createContext, useContext, useEffect, useState } from 'react';
 
 const ThemeContext = createContext();
 
+function getSystemTheme() {
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return 'dark';
+}
+
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
     try {
@@ -10,9 +17,11 @@ export function ThemeProvider({ children }) {
     } catch {
       // fallback
     }
-    return 'dark'; // default to elegant dark theme
+    // Match device/system preference by default
+    return getSystemTheme();
   });
 
+  // Apply theme class to document root
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -24,15 +33,40 @@ export function ThemeProvider({ children }) {
       root.classList.add('light');
       root.style.colorScheme = 'light';
     }
-    try {
-      localStorage.setItem('dr_theme', theme);
-    } catch {
-      // ignore
-    }
   }, [theme]);
+
+  // Listen to device/OS color scheme changes if user hasn't explicitly set a custom theme
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemChange = (e) => {
+      const saved = localStorage.getItem('dr_theme');
+      // Only auto-switch if user hasn't saved an explicit preference
+      if (!saved) {
+        setTheme(e.matches ? 'dark' : 'light');
+      }
+    };
+
+    try {
+      mediaQuery.addEventListener('change', handleSystemChange);
+      return () => mediaQuery.removeEventListener('change', handleSystemChange);
+    } catch {
+      // Fallback for older browsers
+      try {
+        mediaQuery.addListener(handleSystemChange);
+        return () => mediaQuery.removeListener(handleSystemChange);
+      } catch {}
+    }
+  }, []);
 
   const toggleTheme = (e) => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
+
+    // Persist user's explicit preference
+    try {
+      localStorage.setItem('dr_theme', nextTheme);
+    } catch {}
 
     // Circular expanding wipe if View Transitions API is supported
     if (typeof document !== 'undefined' && document.startViewTransition && e && typeof e.clientX === 'number') {

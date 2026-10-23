@@ -34,27 +34,53 @@ if (process.env.VERCEL) {
   app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 }
 
-// API Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/videos', require('./routes/videos'));
-app.use('/api/past-questions', require('./routes/pastQuestions'));
-app.use('/api/portfolio', require('./routes/portfolio'));
-app.use('/api/access', require('./routes/access'));
-app.use('/api/settings', require('./routes/settings'));
-app.use('/api/analytics', require('./routes/analytics'));
-app.use('/api/contact', require('./routes/contact'));
-
 // Health check
-app.get('/api/health', (req, res) => {
+const healthCheck = (req, res) => {
   res.json({ status: 'ok', message: 'Dr. Alhassan API is running' });
-});
+};
+app.get('/api/health', healthCheck);
+app.get('/health', healthCheck);
+
+// API Routes (mounted on both /api/* and root /* to ensure Vercel rewrites match either way)
+const authRoutes = require('./routes/auth');
+const videoRoutes = require('./routes/videos');
+const pastQuestionRoutes = require('./routes/pastQuestions');
+const portfolioRoutes = require('./routes/portfolio');
+const accessRoutes = require('./routes/access');
+const settingsRoutes = require('./routes/settings');
+const analyticsRoutes = require('./routes/analytics');
+const contactRoutes = require('./routes/contact');
+
+app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+
+app.use('/api/videos', videoRoutes);
+app.use('/videos', videoRoutes);
+
+app.use('/api/past-questions', pastQuestionRoutes);
+app.use('/past-questions', pastQuestionRoutes);
+
+app.use('/api/portfolio', portfolioRoutes);
+app.use('/portfolio', portfolioRoutes);
+
+app.use('/api/access', accessRoutes);
+app.use('/access', accessRoutes);
+
+app.use('/api/settings', settingsRoutes);
+app.use('/settings', settingsRoutes);
+
+app.use('/api/analytics', analyticsRoutes);
+app.use('/analytics', analyticsRoutes);
+
+app.use('/api/contact', contactRoutes);
+app.use('/contact', contactRoutes);
 
 // Serve static client assets in production if client/dist exists
 const clientDistPath = path.join(__dirname, '../client/dist');
 if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
 
-  app.get('*', (req, res, next) => {
+  app.get('/{*splat}', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
       return next();
     }
@@ -63,7 +89,7 @@ if (fs.existsSync(clientDistPath)) {
 }
 
 // 404 handler for unmatched API routes
-app.use('/api/*', (req, res) => {
+app.use('/api', (req, res) => {
   res.status(404).json({ error: 'API route not found' });
 });
 
