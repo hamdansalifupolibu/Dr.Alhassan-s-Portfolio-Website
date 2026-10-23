@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, CalendarCheck, BookOpen } from 'lucide-react';
+import { Menu, X, CalendarCheck, BookOpen, Lock } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import ThemeToggle from './ThemeToggle';
 
@@ -19,8 +19,13 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const location = useLocation();
   const { settings } = useSettings();
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const brandName = settings.shortName || 'Dr. Alhassan Osman';
+
+  useEffect(() => {
+    setIsAdmin(!!localStorage.getItem('adminToken'));
+  }, [location]);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -90,14 +95,35 @@ export default function Navbar() {
               <span>Book Me</span>
             </Link>
 
+            {/* Dr. Alhassan Admin / Portal Login Button */}
+            <Link
+              to={isAdmin ? '/admin' : '/admin/login'}
+              className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-all shadow-sm ${
+                isAdmin
+                  ? 'border border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 font-bold'
+                  : 'border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/30'
+              }`}
+              title={isAdmin ? 'Go to Admin Dashboard' : 'Dr. Alhassan Portal Login'}
+            >
+              <Lock size={13} className={isAdmin ? 'text-emerald-500' : 'text-slate-400 dark:text-slate-500'} />
+              <span>{isAdmin ? 'Dashboard' : 'Dr. Login'}</span>
+            </Link>
+
             {/* Theme Toggle (Light / Dark) */}
-            <div className="ml-2 pl-2 border-l border-slate-200 dark:border-slate-800">
+            <div className="ml-1.5 pl-2 border-l border-slate-200 dark:border-slate-800">
               <ThemeToggle />
             </div>
           </div>
 
           {/* Mobile Right Controls: Theme Toggle + Menu Hamburger */}
           <div className="md:hidden flex items-center gap-2">
+            <Link
+              to={isAdmin ? '/admin' : '/admin/login'}
+              className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 hover:text-emerald-500"
+              title="Dr. Login"
+            >
+              <Lock size={16} />
+            </Link>
             <ThemeToggle />
             <button
               onClick={() => setOpen(!open)}
@@ -144,6 +170,15 @@ export default function Navbar() {
                 >
                   <CalendarCheck size={15} />
                   <span>Book Office Hours / Appointment</span>
+                </Link>
+              </li>
+              <li className="pt-1">
+                <Link
+                  to={isAdmin ? '/admin' : '/admin/login'}
+                  className="flex items-center justify-center gap-2 w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-4 py-2.5 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:border-emerald-500/40 transition-colors"
+                >
+                  <Lock size={14} className="text-emerald-500" />
+                  <span>{isAdmin ? 'Dr. Alhassan Admin Dashboard' : 'Dr. Alhassan Portal Login'}</span>
                 </Link>
               </li>
             </ul>

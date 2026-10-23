@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { BookOpen, Video, Mail, ExternalLink } from 'lucide-react';
+import { BookOpen, Video, Mail, ExternalLink, Lock } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
 export default function Footer() {
@@ -89,9 +89,10 @@ export default function Footer() {
           </p>
           <Link
             to="/admin/login"
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/30 text-xs font-medium transition-all shadow-sm"
           >
-            Faculty Admin Portal
+            <Lock size={12} className="text-emerald-500" />
+            <span>Dr. Alhassan Faculty Portal</span>
           </Link>
         </div>
       </div>
