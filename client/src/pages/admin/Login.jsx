@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Lock, User, AlertCircle, Loader2, ArrowLeft } from 'lucide-react';
+import { Lock, User, AlertCircle, Loader2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import API from '../../lib/api';
 import ThemeToggle from '../../components/ThemeToggle';
 import { useToast } from '../../context/ToastContext';
@@ -12,9 +12,10 @@ export default function Login() {
   const navigate = useNavigate();
   const toast = useToast();
 
-  const [form, setForm]     = useState({ username: '', password: '' });
-  const [error, setError]   = useState('');
-  const [loading, setLoading] = useState(false);
+  const [form, setForm]         = useState({ username: '', password: '' });
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -118,7 +119,7 @@ export default function Login() {
                 value={form.username}
                 onChange={handleChange}
                 autoComplete="username"
-                placeholder="Alhassan"
+                placeholder="e.g. administrator"
                 className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 py-2.5 pl-10 pr-4 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm"
               />
             </div>
@@ -135,14 +136,22 @@ export default function Login() {
                 className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
               />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 name="password"
                 value={form.password}
                 onChange={handleChange}
                 autoComplete="current-password"
                 placeholder="••••••••"
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 py-2.5 pl-10 pr-4 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm"
+                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 py-2.5 pl-10 pr-11 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer p-1"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
             </div>
           </div>
 
