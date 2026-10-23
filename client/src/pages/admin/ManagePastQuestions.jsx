@@ -84,7 +84,11 @@ export default function ManagePastQuestions() {
       setTimeout(() => setSuccess(''), 3500);
       fetchQuestions();
     } catch (err) {
-      const msg = err.response?.data?.message || 'Upload failed. Please try again.';
+      const msg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Upload failed. Please try again.';
       setFormError(msg);
       toast.error(msg);
     } finally {

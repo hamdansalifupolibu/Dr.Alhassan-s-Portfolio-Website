@@ -6,12 +6,23 @@ const fs = require('fs');
 const db = require('../db/database');
 const authMiddleware = require('../middleware/authMiddleware');
 
+const getUploadDir = () => {
+  const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  const dir = isServerless ? path.join('/tmp', 'uploads') : path.join(__dirname, '../uploads');
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      console.warn('Could not create upload directory:', e.message);
+    }
+  }
+  return dir;
+};
+
 // Multer storage config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
+    cb(null, getUploadDir());
   },
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
@@ -77,8 +88,14 @@ router.get('/:id/download', verifyAccess, (req, res) => {
 
   if (!question) return res.status(404).json({ error: 'Past question not found' });
 
-  const filePath = path.join(__dirname, '../uploads', question.file_path);
-  if (!fs.existsSync(filePath)) {
+  const possiblePaths = [
+    path.join('/tmp', 'uploads', question.file_path),
+    path.join(__dirname, '../uploads', question.file_path),
+  ];
+
+  const filePath = possiblePaths.find((p) => fs.existsSync(p));
+
+  if (!filePath) {
     return res.status(404).json({ error: 'File not found on server' });
   }
 
@@ -127,8 +144,16 @@ router.delete('/:id', authMiddleware, (req, res) => {
   if (!question) return res.status(404).json({ error: 'Past question not found' });
 
   // Delete file from disk
-  const filePath = path.join(__dirname, '../uploads', question.file_path);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  const possiblePaths = [
+    path.join('/tmp', 'uploads', question.file_path),
+    path.join(__dirname, '../uploads', question.file_path),
+  ];
+
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch (e) {}
+  }
 
   db.prepare('DELETE FROM past_questions WHERE id = ?').run(req.params.id);
   res.json({ message: 'Past question deleted successfully' });
