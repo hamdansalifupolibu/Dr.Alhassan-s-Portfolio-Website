@@ -59,7 +59,7 @@ export default function VideoCard(props) {
           )}
 
           {/* Featured badge */}
-          {(video.is_featured === 1 || video.is_featured === true) && (
+          {(Number(video.is_featured) === 1 || video.is_featured === true || video.is_featured === '1') && (
             <span className="absolute top-3 right-3 bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full shadow-lg shadow-amber-500/20 flex items-center gap-1 backdrop-blur-sm">
               <Sparkles size={11} className="fill-slate-950" />
               Featured

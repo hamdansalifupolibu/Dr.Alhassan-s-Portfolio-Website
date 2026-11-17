@@ -384,15 +384,15 @@ router.get('/', (req, res) => {
     params.push(category);
   }
 
-  if (featured === 'true') {
-    conditions.push('is_featured = 1');
+  if (featured === 'true' || featured === '1') {
+    conditions.push('(is_featured = 1 OR is_featured = "1")');
   }
 
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
 
-  query += ' ORDER BY is_featured DESC, datetime(COALESCE(published_at, created_at)) DESC, id DESC';
+  query += ' ORDER BY (CASE WHEN is_featured = 1 OR is_featured = "1" OR is_featured = TRUE THEN 1 ELSE 0 END) DESC, datetime(COALESCE(published_at, created_at)) DESC, id DESC';
 
   if (limit) {
     query += ' LIMIT ?';
@@ -405,7 +405,7 @@ router.get('/', (req, res) => {
 
 // GET /api/videos/featured — public: get featured videos for showcase banner
 router.get('/featured', (req, res) => {
-  let featured = db.prepare('SELECT * FROM videos WHERE is_featured = 1 ORDER BY datetime(COALESCE(published_at, created_at)) DESC').all();
+  let featured = db.prepare('SELECT * FROM videos WHERE (is_featured = 1 OR is_featured = "1") ORDER BY datetime(COALESCE(published_at, created_at)) DESC').all();
 
   // If no videos are explicitly marked as featured, fallback to latest 3
   if (featured.length === 0) {

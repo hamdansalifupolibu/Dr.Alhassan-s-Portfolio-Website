@@ -129,7 +129,7 @@ export default function Videos() {
 
   // Featured spotlight videos
   const featuredVideos = useMemo(() => {
-    return videos.filter((v) => v.is_featured === 1 || v.is_featured === true);
+    return videos.filter((v) => Number(v.is_featured) === 1 || v.is_featured === true || v.is_featured === '1');
   }, [videos]);
 
   // Robust, multi-token, high-accuracy search & filtering
@@ -157,22 +157,45 @@ export default function Videos() {
       return queryTokens.every((token) => fullText.includes(token));
     });
 
-    // Sort list
+    // Helper: is video featured (robust number/string/boolean check)
+    const isFeat = (item) =>
+      Number(item.is_featured) === 1 || item.is_featured === true || item.is_featured === '1' ? 1 : 0;
+
+    // Sort list: ALWAYS ensure featured videos are pinned at the top
     if (trimmedQuery) {
-      // When searching, sort by relevance score
-      list = [...list].sort(
-        (a, b) =>
-          computeRelevance(b, queryTokens, trimmedQuery) -
-          computeRelevance(a, queryTokens, trimmedQuery)
-      );
+      // When searching, sort by relevance score, giving featured videos a substantial boost (+30)
+      list = [...list].sort((a, b) => {
+        const featBoostB = isFeat(b) ? 30 : 0;
+        const featBoostA = isFeat(a) ? 30 : 0;
+        const scoreB = computeRelevance(b, queryTokens, trimmedQuery) + featBoostB;
+        const scoreA = computeRelevance(a, queryTokens, trimmedQuery) + featBoostA;
+        return scoreB - scoreA;
+      });
     } else if (sortBy === 'title') {
-      list = [...list].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      list = [...list].sort((a, b) => {
+        const diff = isFeat(b) - isFeat(a);
+        if (diff !== 0) return diff;
+        return (a.title || '').localeCompare(b.title || '');
+      });
     } else if (sortBy === 'latest') {
-      list = [...list].sort(
-        (a, b) =>
+      list = [...list].sort((a, b) => {
+        const diff = isFeat(b) - isFeat(a);
+        if (diff !== 0) return diff;
+        return (
           new Date(b.published_at || b.created_at || 0) -
           new Date(a.published_at || a.created_at || 0)
-      );
+        );
+      });
+    } else {
+      // Default: featured first, then newest published/created
+      list = [...list].sort((a, b) => {
+        const diff = isFeat(b) - isFeat(a);
+        if (diff !== 0) return diff;
+        return (
+          new Date(b.published_at || b.created_at || 0) -
+          new Date(a.published_at || a.created_at || 0)
+        );
+      });
     }
 
     return list;

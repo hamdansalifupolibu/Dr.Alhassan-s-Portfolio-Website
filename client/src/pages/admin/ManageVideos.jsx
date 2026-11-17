@@ -238,7 +238,7 @@ export default function ManageVideos() {
     const trimmed = searchQuery.trim().toLowerCase();
     const tokens = trimmed ? trimmed.split(/\s+/).filter(Boolean) : [];
 
-    return videos.filter((v) => {
+    const list = videos.filter((v) => {
       // Tab filter
       if (activeTab === 'featured' && Number(v.is_featured) !== 1) return false;
       if (activeTab === 'standard' && Number(v.is_featured) === 1) return false;
@@ -254,6 +254,17 @@ export default function ManageVideos() {
       }
 
       return true;
+    });
+
+    // Helper: is video featured
+    const isFeat = (v) =>
+      Number(v.is_featured) === 1 || v.is_featured === true || v.is_featured === '1' ? 1 : 0;
+
+    // Ensure featured videos ALWAYS float to the top
+    return list.sort((a, b) => {
+      const diff = isFeat(b) - isFeat(a);
+      if (diff !== 0) return diff;
+      return new Date(b.published_at || b.created_at || 0) - new Date(a.published_at || a.created_at || 0);
     });
   }, [videos, activeTab, categoryFilter, searchQuery]);
 

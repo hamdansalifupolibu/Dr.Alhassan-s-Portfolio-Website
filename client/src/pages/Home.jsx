@@ -87,7 +87,13 @@ export default function Home() {
           const list = Array.isArray(videosRes.value.data)
             ? videosRes.value.data
             : videosRes.value.data?.data ?? videosRes.value.data?.videos ?? [];
-          setVideos(list.slice(0, 3));
+          const sorted = [...list].sort((a, b) => {
+            const isFeatB = Number(b.is_featured) === 1 || b.is_featured === true || b.is_featured === '1' ? 1 : 0;
+            const isFeatA = Number(a.is_featured) === 1 || a.is_featured === true || a.is_featured === '1' ? 1 : 0;
+            if (isFeatB !== isFeatA) return isFeatB - isFeatA;
+            return new Date(b.published_at || b.created_at || 0) - new Date(a.published_at || a.created_at || 0);
+          });
+          setVideos(sorted.slice(0, 3));
         }
 
         if (portfolioRes.status === 'fulfilled') {
