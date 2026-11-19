@@ -45,7 +45,7 @@ const healthCheck = async (req, res) => {
     await db.prepare('SELECT 1 AS ok').get();
   } catch (err) {
     dbOk = false;
-    dbError = err.message;
+    dbError = db.describeError(err);
   }
   const blobConfigured = Boolean((process.env.BLOB_READ_WRITE_TOKEN || '').trim());
   res.set('Cache-Control', 'no-store');
@@ -58,7 +58,16 @@ const healthCheck = async (req, res) => {
       pdfStorage: blobConfigured ? 'vercel-blob' : 'local-disk',
       pdfPersistent: blobConfigured || !process.env.VERCEL,
     },
-    ...(dbError ? { dbError } : {}),
+    ...(dbError
+      ? {
+          dbError,
+          // Non-secret hints to diagnose misconfigured env vars
+          config: {
+            tursoUrlFormatOk: /^(libsql|https|wss?):\/\/[a-z0-9.-]+$/i.test((process.env.TURSO_DATABASE_URL || '').trim()),
+            tursoTokenSet: Boolean((process.env.TURSO_AUTH_TOKEN || '').trim()),
+          },
+        }
+      : {}),
   });
 };
 app.get('/api/health', healthCheck);

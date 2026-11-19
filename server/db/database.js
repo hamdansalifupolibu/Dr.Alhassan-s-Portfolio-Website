@@ -83,7 +83,18 @@ function toObjects(rs) {
   });
 }
 
-const ready = (async () => {
+// Include the underlying network cause ("fetch failed" alone says nothing)
+function describeError(err) {
+  const parts = [err && err.message];
+  let c = err && err.cause;
+  while (c && parts.length < 4) {
+    parts.push(c.code ? `${c.code}: ${c.message}` : c.message);
+    c = c.cause;
+  }
+  return parts.filter(Boolean).join(' <- ');
+}
+
+async function init() {
   if (connection.mode !== 'turso') {
     // Local SQLite: WAL improves concurrency. Ignore if the filesystem refuses it.
     try {
@@ -92,15 +103,31 @@ const ready = (async () => {
   }
   await client.executeMultiple(schema);
   console.log(`[DB] Connected (${connection.mode}${connection.persistent ? '' : ', NOT persistent'})`);
-})();
+}
 
-// Keep the process alive on failure; requests will surface the error through db.ready.
-ready.catch((err) => console.error('[DB] Initialisation failed:', err.message));
+// Initialise once, but if it fails (e.g. a transient network error on cold start) try again on the
+// next request instead of leaving this instance permanently broken.
+let readyPromise = null;
+function ensureReady() {
+  if (!readyPromise) {
+    readyPromise = init().catch((err) => {
+      readyPromise = null;
+      const wrapped = new Error(describeError(err));
+      console.error('[DB] Initialisation failed:', wrapped.message);
+      throw wrapped;
+    });
+  }
+  return readyPromise;
+}
+ensureReady().catch(() => {});
 
 const db = {
   mode: connection.mode,
   persistent: connection.persistent,
-  ready,
+  get ready() {
+    return ensureReady();
+  },
+  describeError,
   client,
 
   prepare(sql) {
