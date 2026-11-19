@@ -4,7 +4,7 @@ const db = require('../db/database');
 const authMiddleware = require('../middleware/authMiddleware');
 
 // POST /api/contact — public: submit contact message or book an appointment
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const {
     type = 'inquiry',
     name,
@@ -26,13 +26,13 @@ router.post('/', (req, res) => {
   }
 
   try {
-    const stmt = db.prepare(`
+    const stmt = await db.prepare(`
       INSERT INTO contact_submissions (
         type, name, email, phone, student_id, subject, message, preferred_date, preferred_time, purpose, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `);
 
-    const result = stmt.run(
+    const result = await stmt.run(
       type === 'booking' ? 'booking' : 'inquiry',
       name.trim(),
       email.trim(),
@@ -59,7 +59,7 @@ router.post('/', (req, res) => {
 });
 
 // GET /api/contact — admin only: view all contact inquiries and bookings
-router.get('/', authMiddleware, (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
     const { type, status } = req.query;
     let query = 'SELECT * FROM contact_submissions';
@@ -81,7 +81,7 @@ router.get('/', authMiddleware, (req, res) => {
 
     query += ' ORDER BY created_at DESC';
 
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.prepare(query).all(...params);
     res.json(rows);
   } catch (err) {
     console.error('Error fetching contact submissions:', err);
@@ -90,7 +90,7 @@ router.get('/', authMiddleware, (req, res) => {
 });
 
 // PATCH /api/contact/:id/status — admin only: update status (e.g., reviewed, confirmed, archived)
-router.patch('/:id/status', authMiddleware, (req, res) => {
+router.patch('/:id/status', authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
@@ -99,8 +99,8 @@ router.patch('/:id/status', authMiddleware, (req, res) => {
   }
 
   try {
-    const stmt = db.prepare('UPDATE contact_submissions SET status = ? WHERE id = ?');
-    const result = stmt.run(status, id);
+    const stmt = await db.prepare('UPDATE contact_submissions SET status = ? WHERE id = ?');
+    const result = await stmt.run(status, id);
 
     if (result.changes === 0) {
       return res.status(404).json({ error: 'Submission not found.' });
@@ -114,11 +114,11 @@ router.patch('/:id/status', authMiddleware, (req, res) => {
 });
 
 // DELETE /api/contact/:id — admin only: delete a submission
-router.delete('/:id', authMiddleware, (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const result = db.prepare('DELETE FROM contact_submissions WHERE id = ?').run(id);
+    const result = await db.prepare('DELETE FROM contact_submissions WHERE id = ?').run(id);
     if (result.changes === 0) {
       return res.status(404).json({ error: 'Submission not found.' });
     }

@@ -3,6 +3,10 @@ import { Upload, Trash2, FileText, Loader2, AlertCircle, Download, CheckCircle2 
 import AdminLayout from '../../components/AdminLayout';
 import API from '../../lib/api';
 import { useToast } from '../../context/ToastContext';
+import { upload as blobUpload } from '@vercel/blob/client';
+
+const formatMB = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const isPdf = (f) => f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
 
 const inputCls =
   'w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm';
@@ -20,6 +24,7 @@ export default function ManagePastQuestions() {
   const [form, setForm]           = useState(EMPTY_FORM);
   const [file, setFile]           = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress]   = useState(null); // 0-100 while uploading
   const [formError, setFormError] = useState('');
   const fileRef                   = useRef(null);
 
@@ -56,7 +61,7 @@ export default function ManagePastQuestions() {
       toast.error('Please choose a PDF file to upload.');
       return;
     }
-    if (file.type !== 'application/pdf') {
+    if (!isPdf(file)) {
       setFormError('Only PDF files are allowed.');
       toast.error('Only PDF documents are supported.');
       return;
@@ -64,18 +69,44 @@ export default function ManagePastQuestions() {
 
     setSubmitting(true);
     setFormError('');
-
-    const fd = new FormData();
-    fd.append('title',       form.title.trim());
-    fd.append('subject',     form.subject.trim());
-    fd.append('year',        form.year);
-    fd.append('description', form.description.trim());
-    fd.append('file',        file);
+    setProgress(0);
 
     try {
-      await API.post('/past-questions', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Ask the server which storage is active (Vercel Blob in production, local disk in development)
+      const { data: cfg } = await API.get('/past-questions/upload-config');
+      if (cfg?.maxBytes && file.size > cfg.maxBytes) {
+        throw new Error(`This PDF is ${formatMB(file.size)}. The maximum allowed size is ${formatMB(cfg.maxBytes)}.`);
+      }
+
+      const meta = {
+        title:       form.title.trim(),
+        subject:     form.subject.trim(),
+        year:        form.year,
+        description: form.description.trim(),
+      };
+
+      if (cfg?.mode === 'blob') {
+        // 1) Upload the file straight from the browser to permanent Vercel Blob storage
+        const safeName = file.name.replace(/[^\w.()-]+/g, '_').replace(/\.pdf$/i, '') + '.pdf';
+        const blob = await blobUpload(`past-questions/${safeName}`, file, {
+          access: 'public',
+          contentType: 'application/pdf',
+          handleUploadUrl: `${API.defaults.baseURL}/past-questions/blob-token`,
+          headers: { Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}` },
+          multipart: file.size > 5 * 1024 * 1024, // chunked + retried for large files
+          onUploadProgress: ({ percentage }) => setProgress(Math.round(percentage)),
+        });
+        // 2) Record it in the database
+        await API.post('/past-questions', { ...meta, blobUrl: blob.url });
+      } else {
+        const fd = new FormData();
+        Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
+        fd.append('file', file);
+        await API.post('/past-questions', fd, {
+          onUploadProgress: (e) => e.total && setProgress(Math.round((e.loaded / e.total) * 100)),
+        });
+      }
+
       setForm(EMPTY_FORM);
       setFile(null);
       if (fileRef.current) fileRef.current.value = '';
@@ -84,15 +115,18 @@ export default function ManagePastQuestions() {
       setTimeout(() => setSuccess(''), 3500);
       fetchQuestions();
     } catch (err) {
-      const msg =
+      let msg =
         err.response?.data?.message ||
         err.response?.data?.error ||
         err.message ||
         'Upload failed. Please try again.';
+      if (err.response?.status === 401) msg = 'Your admin session has expired. Please log in again.';
+      if (err.response?.status === 413) msg = err.response?.data?.error || 'The PDF is too large for the server.';
       setFormError(msg);
       toast.error(msg);
     } finally {
       setSubmitting(false);
+      setProgress(null);
     }
   };
 
@@ -203,7 +237,7 @@ export default function ManagePastQuestions() {
             <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-4 text-sm text-slate-600 dark:text-slate-400 transition hover:border-emerald-500 hover:text-slate-900 dark:hover:text-slate-200">
               <FileText size={22} className={file ? 'text-emerald-500' : 'text-slate-400'} />
               <span className="truncate font-medium">
-                {file ? file.name : 'Click to select or drag PDF file here…'}
+                {file ? `${file.name} (${formatMB(file.size)})` : 'Click to select or drag PDF file here…'}
               </span>
               <input
                 ref={fileRef}
@@ -211,11 +245,22 @@ export default function ManagePastQuestions() {
                 accept="application/pdf"
                 className="hidden"
                 onChange={(e) => { setFile(e.target.files[0] || null); setFormError(''); }}
+                disabled={submitting}
               />
             </label>
           </div>
 
-          <div className="sm:col-span-2 flex justify-end">
+          <div className="sm:col-span-2 flex items-center justify-end gap-4">
+            {progress !== null && (
+              <div className="flex flex-1 items-center gap-3" aria-live="polite">
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                  <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress}%` }} />
+                </div>
+                <span className="w-24 text-right text-xs font-medium text-slate-600 dark:text-slate-400">
+                  {progress < 100 ? `Uploading ${progress}%` : 'Saving…'}
+                </span>
+              </div>
+            )}
             <button
               type="submit"
               disabled={submitting}
@@ -256,7 +301,7 @@ export default function ManagePastQuestions() {
             {questions.map((q) => {
               const qid = q.id || q._id;
               const dateVal = q.created_at || q.createdAt;
-              const downloadUrl = `/api/past-questions/${qid}/download`;
+              const downloadUrl = `${API.defaults.baseURL}/past-questions/${qid}/download?token=${encodeURIComponent(localStorage.getItem('adminToken') || '')}`;
               return (
                 <div key={qid} className="flex items-center gap-4 px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-500 border border-red-500/20">

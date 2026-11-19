@@ -8,7 +8,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const JWT_SECRET = process.env.JWT_SECRET || 'dr-alhassan-admin-secret-2024';
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -16,7 +16,7 @@ router.post('/login', (req, res) => {
   }
 
   // Case-insensitive comparison for username convenience
-  const admin = db.prepare('SELECT * FROM admin WHERE LOWER(username) = LOWER(?)').get(username.trim());
+  const admin = await db.prepare('SELECT * FROM admin WHERE LOWER(username) = LOWER(?)').get(username.trim());
 
   if (!admin) {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -38,21 +38,21 @@ router.post('/login', (req, res) => {
 });
 
 // GET /api/auth/me — returns current admin profile (protected)
-router.get('/me', authMiddleware, (req, res) => {
-  const admin = db.prepare('SELECT id, username FROM admin WHERE id = ?').get(req.admin.id);
+router.get('/me', authMiddleware, async (req, res) => {
+  const admin = await db.prepare('SELECT id, username FROM admin WHERE id = ?').get(req.admin.id);
   if (!admin) return res.status(404).json({ error: 'Admin not found' });
   res.json(admin);
 });
 
 // PUT /api/auth/change-credentials — change username and/or password (protected)
-router.put('/change-credentials', authMiddleware, (req, res) => {
+router.put('/change-credentials', authMiddleware, async (req, res) => {
   const { currentPassword, newUsername, newPassword } = req.body;
 
   if (!currentPassword) {
     return res.status(400).json({ error: 'Current password is required to verify your identity.' });
   }
 
-  const admin = db.prepare('SELECT * FROM admin WHERE id = ?').get(req.admin.id);
+  const admin = await db.prepare('SELECT * FROM admin WHERE id = ?').get(req.admin.id);
   if (!admin) {
     return res.status(404).json({ error: 'Admin account not found.' });
   }
@@ -66,7 +66,7 @@ router.put('/change-credentials', authMiddleware, (req, res) => {
   if (newUsername && newUsername.trim()) {
     const trimmed = newUsername.trim();
     // Check if new username is already taken by another ID
-    const conflict = db.prepare('SELECT id FROM admin WHERE LOWER(username) = LOWER(?) AND id != ?').get(trimmed, admin.id);
+    const conflict = await db.prepare('SELECT id FROM admin WHERE LOWER(username) = LOWER(?) AND id != ?').get(trimmed, admin.id);
     if (conflict) {
       return res.status(400).json({ error: 'Username is already taken.' });
     }
@@ -81,7 +81,7 @@ router.put('/change-credentials', authMiddleware, (req, res) => {
     updatedPasswordHash = bcrypt.hashSync(newPassword.trim(), 10);
   }
 
-  db.prepare('UPDATE admin SET username = ?, password_hash = ? WHERE id = ?')
+  await db.prepare('UPDATE admin SET username = ?, password_hash = ? WHERE id = ?')
     .run(updatedUsername, updatedPasswordHash, admin.id);
 
   // Issue new token with updated username

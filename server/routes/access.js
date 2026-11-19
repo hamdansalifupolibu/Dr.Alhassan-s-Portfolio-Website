@@ -76,7 +76,7 @@ function validateUmatStudent(rawInput) {
 }
 
 // POST /api/access/verify-student — UMAT student verification
-router.post('/verify-student', (req, res) => {
+router.post('/verify-student', async (req, res) => {
   const { identifier } = req.body;
 
   if (!identifier) {
@@ -96,7 +96,7 @@ router.post('/verify-student', (req, res) => {
   }
 
   // Check if this identifier already has an active token
-  const existing = db.prepare(`
+  const existing = await db.prepare(`
     SELECT * FROM access_tokens
     WHERE identifier = ? AND type = 'umat' AND expires_at > datetime('now')
   `).get(check.identifier);
@@ -113,7 +113,7 @@ router.post('/verify-student', (req, res) => {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + TOKEN_DURATION_HOURS * 60 * 60 * 1000).toISOString();
 
-  db.prepare(
+  await db.prepare(
     'INSERT INTO access_tokens (token, type, identifier, expires_at) VALUES (?, ?, ?, ?)'
   ).run(token, 'umat', check.identifier, expiresAt);
 
@@ -126,11 +126,11 @@ router.post('/verify-student', (req, res) => {
 });
 
 // POST /api/access/feedback — optional student survey/feedback
-router.post('/feedback', (req, res) => {
+router.post('/feedback', async (req, res) => {
   const { studentIdentifier, name, programme, level, reason, suggestions } = req.body;
 
   try {
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO student_feedback (student_identifier, name, programme, level, reason, suggestions)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(
@@ -150,8 +150,8 @@ router.post('/feedback', (req, res) => {
 });
 
 // GET /api/access/feedback — admin only: view student feedback
-router.get('/feedback', authMiddleware, (req, res) => {
-  const rows = db.prepare(`
+router.get('/feedback', authMiddleware, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT * FROM student_feedback
     ORDER BY created_at DESC
     LIMIT 100
@@ -160,12 +160,12 @@ router.get('/feedback', authMiddleware, (req, res) => {
 });
 
 // POST /api/access/verify-token — check if a stored token is still valid
-router.post('/verify-token', (req, res) => {
+router.post('/verify-token', async (req, res) => {
   const { token } = req.body;
 
   if (!token) return res.status(400).json({ valid: false });
 
-  const record = db.prepare(`
+  const record = await db.prepare(`
     SELECT * FROM access_tokens WHERE token = ? AND expires_at > datetime('now')
   `).get(token);
 
@@ -174,86 +174,97 @@ router.post('/verify-token', (req, res) => {
   res.json({ valid: true, type: record.type, identifier: record.identifier });
 });
 
+const DEFAULT_PAYSTACK_PUBLIC_KEY = 'pk_live_31edc9824f6209e93c2ec11b860d8899f6400db2';
+const MIN_PRICE_GHS = 0.1; // Paystack cannot charge less than this
+const MAX_PRICE_GHS = 10000;
+
+// Single source of truth for the fee — always read fresh from the database (never cached).
+async function readPaymentConfig() {
+  const rows = await db
+    .prepare("SELECT key, value FROM settings WHERE key IN ('nonUmatPrice', 'paymentEnabled')")
+    .all();
+  const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const parsed = parseFloat(map.nonUmatPrice);
+  return {
+    priceGHS: Number.isFinite(parsed) ? parsed : 20,
+    paymentEnabled: map.paymentEnabled !== undefined ? map.paymentEnabled !== 'false' : true,
+    paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY || DEFAULT_PAYSTACK_PUBLIC_KEY,
+  };
+}
+
+// Accepts true/false, "true"/"false", 1/0
+function parseBool(v) {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') return !['false', '0', 'off', 'no', ''].includes(v.trim().toLowerCase());
+  return Boolean(v);
+}
+
 // GET /api/access/public-config — public: get Paystack public key & current configured price
-router.get('/public-config', (req, res) => {
+router.get('/public-config', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
-    const priceRow = db.prepare("SELECT value FROM settings WHERE key = 'nonUmatPrice'").get();
-    const enabledRow = db.prepare("SELECT value FROM settings WHERE key = 'paymentEnabled'").get();
-
-    const priceGHS = priceRow && !isNaN(parseFloat(priceRow.value)) ? parseFloat(priceRow.value) : 20;
-    const paymentEnabled = enabledRow ? enabledRow.value !== 'false' : true;
-
-    res.json({
-      paystackPublicKey:
-        process.env.PAYSTACK_PUBLIC_KEY || 'pk_live_31edc9824f6209e93c2ec11b860d8899f6400db2',
-      priceGHS,
-      paymentEnabled,
-    });
+    res.json(await readPaymentConfig());
   } catch (err) {
-    res.json({
-      paystackPublicKey:
-        process.env.PAYSTACK_PUBLIC_KEY || 'pk_live_31edc9824f6209e93c2ec11b860d8899f6400db2',
-      priceGHS: 20,
-      paymentEnabled: true,
-    });
+    console.error('Failed to read public payment config:', err);
+    // Do NOT silently report a made-up price — the client must not charge a wrong amount.
+    res.status(503).json({ error: 'Payment configuration is temporarily unavailable. Please try again.' });
   }
 });
 
 // GET /api/access/payment-config — admin: get current payment settings
-router.get('/payment-config', authMiddleware, (req, res) => {
+router.get('/payment-config', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
-    const priceRow = db.prepare("SELECT value FROM settings WHERE key = 'nonUmatPrice'").get();
-    const enabledRow = db.prepare("SELECT value FROM settings WHERE key = 'paymentEnabled'").get();
-
-    const priceGHS = priceRow && !isNaN(parseFloat(priceRow.value)) ? parseFloat(priceRow.value) : 20;
-    const paymentEnabled = enabledRow ? enabledRow.value !== 'false' : true;
-
-    res.json({
-      priceGHS,
-      paymentEnabled,
-      paystackPublicKey:
-        process.env.PAYSTACK_PUBLIC_KEY || 'pk_live_31edc9824f6209e93c2ec11b860d8899f6400db2',
-    });
+    res.json({ ...(await readPaymentConfig()), persistent: db.persistent, storageMode: db.mode });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to read payment configuration' });
+    console.error('Failed to read payment config:', err);
+    res.status(500).json({ error: 'Failed to read payment configuration: ' + err.message });
   }
 });
 
 // PUT /api/access/payment-config — admin: update payment fee & status
-router.put('/payment-config', authMiddleware, (req, res) => {
+router.put('/payment-config', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const { priceGHS, paymentEnabled } = req.body || {};
+  const upsertSql = `
+    INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `;
+  const statements = [];
+
+  if (priceGHS !== undefined && priceGHS !== null && priceGHS !== '') {
+    const num = typeof priceGHS === 'number' ? priceGHS : parseFloat(String(priceGHS).replace(/,/g, ''));
+    if (!Number.isFinite(num) || num < MIN_PRICE_GHS || num > MAX_PRICE_GHS) {
+      return res.status(400).json({
+        error: `Price must be a number between GH₵ ${MIN_PRICE_GHS.toFixed(2)} and GH₵ ${MAX_PRICE_GHS}.`,
+      });
+    }
+    const rounded = Math.round(num * 100) / 100;
+    statements.push({ sql: upsertSql, args: ['nonUmatPrice', String(rounded)] });
+  }
+
+  if (paymentEnabled !== undefined && paymentEnabled !== null) {
+    statements.push({ sql: upsertSql, args: ['paymentEnabled', parseBool(paymentEnabled) ? 'true' : 'false'] });
+  }
+
+  if (statements.length === 0) {
+    return res.status(400).json({ error: 'Nothing to update. Provide priceGHS and/or paymentEnabled.' });
+  }
+
   try {
-    const { priceGHS, paymentEnabled } = req.body;
-
-    if (priceGHS !== undefined) {
-      const num = parseFloat(priceGHS);
-      if (isNaN(num) || num < 0) {
-        return res.status(400).json({ error: 'Price must be a valid non-negative number' });
-      }
-      db.prepare(`
-        INSERT INTO settings (key, value, updated_at) VALUES ('nonUmatPrice', ?, datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
-      `).run(String(num));
-    }
-
-    if (paymentEnabled !== undefined) {
-      db.prepare(`
-        INSERT INTO settings (key, value, updated_at) VALUES ('paymentEnabled', ?, datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
-      `).run(paymentEnabled ? 'true' : 'false');
-    }
-
-    const priceRow = db.prepare("SELECT value FROM settings WHERE key = 'nonUmatPrice'").get();
-    const enabledRow = db.prepare("SELECT value FROM settings WHERE key = 'paymentEnabled'").get();
-
+    await db.batch(statements); // atomic: both values change together or not at all
+    const saved = await readPaymentConfig(); // read back what is actually stored
     res.json({
       success: true,
       message: 'Payment configuration updated successfully',
-      priceGHS: priceRow ? parseFloat(priceRow.value) : 20,
-      paymentEnabled: enabledRow ? enabledRow.value !== 'false' : true,
+      ...saved,
+      persistent: db.persistent,
+      storageMode: db.mode,
     });
   } catch (err) {
     console.error('Failed to update payment config:', err);
-    res.status(500).json({ error: 'Failed to update payment configuration' });
+    res.status(500).json({ error: 'Failed to save the new fee: ' + err.message });
   }
 });
 
@@ -266,7 +277,7 @@ router.post('/paystack-verify', async (req, res) => {
   }
 
   // Check if this payment ref already issued a token
-  const existingToken = db.prepare(`
+  const existingToken = await db.prepare(`
     SELECT * FROM access_tokens WHERE payment_ref = ? AND expires_at > datetime('now')
   `).get(reference);
 
@@ -315,7 +326,7 @@ router.post('/paystack-verify', async (req, res) => {
 
     // Insert or update transaction in payments table
     try {
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO payments (reference, amount, currency, email, customer_name, channel, status, paid_at, metadata)
         VALUES (?, ?, ?, ?, ?, ?, 'success', ?, ?)
         ON CONFLICT(reference) DO UPDATE SET status = 'success', paid_at = excluded.paid_at
@@ -336,7 +347,7 @@ router.post('/paystack-verify', async (req, res) => {
     const token = generateToken();
     const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(); // 1 year access
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO access_tokens (token, type, identifier, payment_ref, expires_at)
       VALUES (?, 'paid', ?, ?, ?)
     `).run(token, email, reference, expiresAt);
@@ -375,14 +386,14 @@ router.get('/payments', authMiddleware, async (req, res) => {
       });
       const psJson = await psRes.json();
       if (psJson && psJson.status && Array.isArray(psJson.data)) {
-        const insertTx = db.prepare(`
+        const insertTx = await db.prepare(`
           INSERT INTO payments (reference, amount, currency, email, customer_name, channel, status, paid_at, metadata)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(reference) DO UPDATE SET
             status = excluded.status,
             paid_at = COALESCE(payments.paid_at, excluded.paid_at)
         `);
-        const insertToken = db.prepare(`
+        const insertToken = await db.prepare(`
           INSERT OR IGNORE INTO access_tokens (token, type, identifier, payment_ref, expires_at)
           VALUES (?, 'paid', ?, ?, ?)
         `);
@@ -397,7 +408,7 @@ router.get('/payments', authMiddleware, async (req, res) => {
             const channel = tx.channel || 'mobile_money/card';
             const paidAt = tx.paid_at || new Date().toISOString();
 
-            insertTx.run(
+            await insertTx.run(
               tx.reference,
               amountGHS,
               currency,
@@ -410,11 +421,11 @@ router.get('/payments', authMiddleware, async (req, res) => {
             );
 
             // Also ensure access token is recorded for the user
-            const existingToken = db.prepare('SELECT token FROM access_tokens WHERE payment_ref = ?').get(tx.reference);
+            const existingToken = await db.prepare('SELECT token FROM access_tokens WHERE payment_ref = ?').get(tx.reference);
             if (!existingToken) {
               const token = generateToken();
               const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-              insertToken.run(token, email, tx.reference, expiresAt);
+              await insertToken.run(token, email, tx.reference, expiresAt);
             }
           }
         }
@@ -425,13 +436,13 @@ router.get('/payments', authMiddleware, async (req, res) => {
   }
 
   try {
-    const payments = db.prepare(`
+    const payments = await db.prepare(`
       SELECT * FROM payments
       ORDER BY datetime(paid_at) DESC
       LIMIT 100
     `).all();
 
-    const summary = db.prepare(`
+    const summary = await db.prepare(`
       SELECT
         COUNT(*) as totalCount,
         COALESCE(SUM(amount), 0) as totalRevenue

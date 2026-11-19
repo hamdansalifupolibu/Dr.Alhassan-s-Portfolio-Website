@@ -143,10 +143,11 @@ export default function Dashboard() {
       setPaymentConfig({
         priceGHS: data.priceGHS,
         paymentEnabled: data.paymentEnabled,
+        persistent: data.persistent,
       });
       setPriceInput(String(data.priceGHS));
       setPaymentEnabledInput(data.paymentEnabled);
-      const msg = `Fee successfully updated to GH₵ ${data.priceGHS.toFixed(2)}${!data.paymentEnabled ? ' (Gate Paused)' : ''}!`;
+      const msg = `Fee successfully updated to GH₵ ${Number(data.priceGHS).toFixed(2)}${!data.paymentEnabled ? ' (Gate Paused)' : ''}!`;
       setPaymentConfigMsg({
         type: 'success',
         text: msg,
@@ -155,7 +156,10 @@ export default function Dashboard() {
       refreshSettings();
       setTimeout(() => setPaymentConfigMsg(null), 4000);
     } catch (err) {
-      const msg = err?.response?.data?.error || 'Failed to update payment fee. Please try again.';
+      const msg =
+        err?.response?.status === 401
+          ? 'Your admin session has expired. Please log in again.'
+          : err?.response?.data?.error || 'Failed to update payment fee. Please try again.';
       setPaymentConfigMsg({
         type: 'error',
         text: msg,
@@ -473,6 +477,16 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {paymentConfig.persistent === false && (
+          <div className="mt-5 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/15 px-4 py-3 text-xs sm:text-sm text-amber-800 dark:text-amber-300">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            <span>
+              Permanent storage is not configured on the server (TURSO_DATABASE_URL missing). Fee changes may be lost
+              or differ between visitors until the Turso database is connected.
+            </span>
+          </div>
+        )}
+
         {/* Message Alert */}
         {paymentConfigMsg && (
           <div
@@ -514,8 +528,9 @@ export default function Dashboard() {
                 </span>
                 <input
                   type="number"
-                  min="0"
-                  step="1"
+                  min="0.1"
+                  step="0.01"
+                  inputMode="decimal"
                   value={priceInput}
                   onChange={(e) => setPriceInput(e.target.value)}
                   placeholder="20"

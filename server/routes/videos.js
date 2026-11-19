@@ -263,7 +263,7 @@ async function syncYouTubeFeed() {
   let targetUrl = 'https://www.youtube.com/@AlhassanWielaPh.D/videos';
 
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'youtubeChannel'").get();
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'youtubeChannel'").get();
     if (row && row.value) {
       const v = row.value.trim();
       targetUrl = v.endsWith('/videos') ? v : `${v.replace(/\/$/, '')}/videos`;
@@ -289,12 +289,11 @@ async function syncYouTubeFeed() {
     return { synced: 0, total: 0 };
   }
 
-  const findStmt = db.prepare('SELECT id, is_featured FROM videos WHERE youtube_id = ? OR youtube_url = ?');
-  const insertStmt = db.prepare(`
+  const insertSql = `
     INSERT INTO videos (title, description, youtube_url, thumbnail_url, category, is_featured, youtube_id, published_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const updateStmt = db.prepare(`
+  `;
+  const updateSql = `
     UPDATE videos SET
       title = ?,
       description = COALESCE(?, description),
@@ -303,54 +302,49 @@ async function syncYouTubeFeed() {
       category = COALESCE(?, category),
       youtube_id = ?
     WHERE id = ?
-  `);
+  `;
 
   // Check how many featured videos exist right now
-  const existingFeatured = db.prepare('SELECT COUNT(*) as count FROM videos WHERE is_featured = 1').get()?.count || 0;
+  const existingFeatured = (await db.prepare('SELECT COUNT(*) as count FROM videos WHERE is_featured = 1').get())?.count || 0;
 
-  let syncedCount = 0;
+  // Load existing videos once (one query instead of one per video) and build a single atomic batch
+  const existingRows = await db.prepare('SELECT id, youtube_id, youtube_url FROM videos').all();
+  const byYoutubeId = new Map();
+  const byUrl = new Map();
+  for (const r of existingRows) {
+    if (r.youtube_id) byYoutubeId.set(r.youtube_id, r);
+    if (r.youtube_url) byUrl.set(r.youtube_url, r);
+  }
 
-  const insertTx = db.transaction((list) => {
-    list.forEach((item, idx) => {
-      const existing = findStmt.get(item.videoId, item.youtubeUrl);
-      if (existing) {
-        updateStmt.run(
-          item.title,
-          item.description,
-          item.thumbnailUrl,
-          item.publishedAt,
-          item.category,
-          item.videoId,
-          existing.id
-        );
-      } else {
-        // If no featured videos yet, feature the top 3 by default
-        const shouldFeature = existingFeatured === 0 && idx < 3;
-        insertStmt.run(
-          item.title,
-          item.description,
-          item.youtubeUrl,
-          item.thumbnailUrl,
-          item.category,
-          shouldFeature ? 1 : 0,
-          item.videoId,
-          item.publishedAt
-        );
-      }
-      syncedCount++;
-    });
+  const statements = [];
+  items.forEach((item, idx) => {
+    const existing = byYoutubeId.get(item.videoId) || byUrl.get(item.youtubeUrl);
+    if (existing) {
+      statements.push({
+        sql: updateSql,
+        args: [item.title, item.description, item.thumbnailUrl, item.publishedAt, item.category, item.videoId, existing.id],
+      });
+    } else {
+      // If no featured videos yet, feature the top 3 by default
+      const shouldFeature = existingFeatured === 0 && idx < 3;
+      statements.push({
+        sql: insertSql,
+        args: [item.title, item.description, item.youtubeUrl, item.thumbnailUrl, item.category, shouldFeature ? 1 : 0, item.videoId, item.publishedAt],
+      });
+    }
   });
 
-  insertTx(items);
+  await db.batch(statements);
+  const syncedCount = statements.length;
 
-  const totalInDb = db.prepare('SELECT COUNT(*) as count FROM videos').get()?.count || 0;
+  const totalInDb = (await db.prepare('SELECT COUNT(*) as count FROM videos').get())?.count || 0;
   return { synced: syncedCount, total: totalInDb };
 }
 
 // Background auto-sync: sync immediately on launch if library has < 50 items, then periodic every 6 hours
-setTimeout(() => {
+setTimeout(async () => {
   try {
-    const currentCount = db.prepare('SELECT COUNT(*) as count FROM videos').get()?.count || 0;
+    const currentCount = (await db.prepare('SELECT COUNT(*) as count FROM videos').get())?.count || 0;
     if (currentCount < 50) {
       console.log(`[Auto-Sync] Library has only ${currentCount} videos. Initiating complete YouTube channel sync...`);
       syncYouTubeFeed()
@@ -373,7 +367,7 @@ setInterval(() => {
 // ── ROUTES ───────────────────────────────────────────────────────────────────
 
 // GET /api/videos — public: get all videos ordered with featured first
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { category, featured, limit } = req.query;
   let query = 'SELECT * FROM videos';
   const conditions = [];
@@ -385,44 +379,44 @@ router.get('/', (req, res) => {
   }
 
   if (featured === 'true' || featured === '1') {
-    conditions.push('(is_featured = 1 OR is_featured = "1")');
+    conditions.push('(CAST(is_featured AS INTEGER) = 1)');
   }
 
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
 
-  query += ' ORDER BY (CASE WHEN is_featured = 1 OR is_featured = "1" OR is_featured = TRUE THEN 1 ELSE 0 END) DESC, datetime(COALESCE(published_at, created_at)) DESC, id DESC';
+  query += ' ORDER BY (CASE WHEN CAST(is_featured AS INTEGER) = 1 THEN 1 ELSE 0 END) DESC, datetime(COALESCE(published_at, created_at)) DESC, id DESC';
 
   if (limit) {
     query += ' LIMIT ?';
     params.push(parseInt(limit, 10));
   }
 
-  const videos = db.prepare(query).all(...params);
+  const videos = await db.prepare(query).all(...params);
   res.json(videos);
 });
 
 // GET /api/videos/featured — public: get featured videos for showcase banner
-router.get('/featured', (req, res) => {
-  let featured = db.prepare('SELECT * FROM videos WHERE (is_featured = 1 OR is_featured = "1") ORDER BY datetime(COALESCE(published_at, created_at)) DESC').all();
+router.get('/featured', async (req, res) => {
+  let featured = await db.prepare('SELECT * FROM videos WHERE (CAST(is_featured AS INTEGER) = 1) ORDER BY datetime(COALESCE(published_at, created_at)) DESC').all();
 
   // If no videos are explicitly marked as featured, fallback to latest 3
   if (featured.length === 0) {
-    featured = db.prepare('SELECT * FROM videos ORDER BY datetime(COALESCE(published_at, created_at)) DESC LIMIT 3').all();
+    featured = await db.prepare('SELECT * FROM videos ORDER BY datetime(COALESCE(published_at, created_at)) DESC LIMIT 3').all();
   }
 
   res.json(featured);
 });
 
 // GET /api/videos/categories — public: get list of unique categories
-router.get('/categories', (req, res) => {
-  const categories = db.prepare('SELECT DISTINCT category FROM videos WHERE category IS NOT NULL ORDER BY category ASC').all();
+router.get('/categories', async (req, res) => {
+  const categories = await db.prepare('SELECT DISTINCT category FROM videos WHERE category IS NOT NULL ORDER BY category ASC').all();
   res.json(['All', ...categories.map((c) => c.category)]);
 });
 
 // POST /api/videos/sync-youtube — public or admin: automatically pull all channel videos
-router.post('/sync-youtube', async (req, res) => {
+router.post('/sync-youtube', authMiddleware, async (req, res) => {
   try {
     const result = await syncYouTubeFeed();
     res.json({
@@ -436,10 +430,10 @@ router.post('/sync-youtube', async (req, res) => {
 });
 
 // PATCH /api/videos/:id/feature — admin only: toggle or set featured status
-router.patch('/:id/feature', authMiddleware, (req, res) => {
+router.patch('/:id/feature', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const video = db.prepare('SELECT * FROM videos WHERE id = ?').get(id);
+    const video = await db.prepare('SELECT * FROM videos WHERE id = ?').get(id);
 
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
@@ -450,8 +444,8 @@ router.patch('/:id/feature', authMiddleware, (req, res) => {
       newFeatured = Number(video.is_featured) === 1 ? 0 : 1;
     }
 
-    db.prepare('UPDATE videos SET is_featured = ? WHERE id = ?').run(newFeatured, id);
-    const updated = db.prepare('SELECT * FROM videos WHERE id = ?').get(id);
+    await db.prepare('UPDATE videos SET is_featured = ? WHERE id = ?').run(newFeatured, id);
+    const updated = await db.prepare('SELECT * FROM videos WHERE id = ?').get(id);
 
     res.json({
       message: newFeatured ? 'Video added to Featured Showcase!' : 'Video removed from Featured Showcase.',
@@ -464,14 +458,14 @@ router.patch('/:id/feature', authMiddleware, (req, res) => {
 });
 
 // GET /api/videos/:id — public: single video details
-router.get('/:id', (req, res) => {
-  const video = db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
+router.get('/:id', async (req, res) => {
+  const video = await db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
   if (!video) return res.status(404).json({ error: 'Video not found' });
   res.json(video);
 });
 
 // POST /api/videos — admin only: manually add video
-router.post('/', authMiddleware, (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   const { title, description, thumbnail_url, category, is_featured } = req.body;
   const youtube_url = req.body.youtube_url || req.body.youtubeUrl;
 
@@ -485,7 +479,7 @@ router.post('/', authMiddleware, (req, res) => {
   const autoThumbnail = videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : null;
 
   try {
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO videos (title, description, youtube_url, thumbnail_url, category, is_featured, youtube_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -498,7 +492,7 @@ router.post('/', authMiddleware, (req, res) => {
       videoId
     );
 
-    const newVideo = db.prepare('SELECT * FROM videos WHERE id = ?').get(result.lastInsertRowid);
+    const newVideo = await db.prepare('SELECT * FROM videos WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(newVideo);
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE constraint failed')) {
@@ -510,10 +504,10 @@ router.post('/', authMiddleware, (req, res) => {
 });
 
 // PUT /api/videos/:id — admin only: update video
-router.put('/:id', authMiddleware, (req, res) => {
+router.put('/:id', authMiddleware, async (req, res) => {
   const { title, description, thumbnail_url, category, is_featured } = req.body;
   const youtube_url = req.body.youtube_url || req.body.youtubeUrl;
-  const video = db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
+  const video = await db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
 
   if (!video) return res.status(404).json({ error: 'Video not found' });
 
@@ -523,7 +517,7 @@ router.put('/:id', authMiddleware, (req, res) => {
   const autoThumbnail = videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : video.thumbnail_url;
   const finalFeatured = is_featured !== undefined ? (is_featured ? 1 : 0) : video.is_featured;
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE videos SET
       title = ?,
       description = ?,
@@ -544,16 +538,16 @@ router.put('/:id', authMiddleware, (req, res) => {
     req.params.id
   );
 
-  const updated = db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
+  const updated = await db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
 // DELETE /api/videos/:id — admin only
-router.delete('/:id', authMiddleware, (req, res) => {
-  const video = db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
+router.delete('/:id', authMiddleware, async (req, res) => {
+  const video = await db.prepare('SELECT * FROM videos WHERE id = ?').get(req.params.id);
   if (!video) return res.status(404).json({ error: 'Video not found' });
 
-  db.prepare('DELETE FROM videos WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM videos WHERE id = ?').run(req.params.id);
   res.json({ message: 'Video deleted successfully' });
 });
 

@@ -1,240 +1,139 @@
+/**
+ * Database layer (libSQL / SQLite).
+ *
+ * - Production (Vercel): set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN. Turso is hosted SQLite, so every
+ *   serverless instance reads and writes the SAME database and changes are permanent.
+ * - Local development: falls back to the SQLite file at server/db/alhassan.db.
+ * - Vercel WITHOUT Turso: falls back to a throw-away copy in /tmp. This is NOT persistent (changes are
+ *   lost and differ between instances) and is reported via `db.persistent === false` / GET /api/health.
+ *
+ * API (all async):
+ *   await db.prepare(sql).get(...params)   -> first row object or undefined
+ *   await db.prepare(sql).all(...params)   -> array of row objects
+ *   await db.prepare(sql).run(...params)   -> { changes, lastInsertRowid }
+ *   await db.batch([{ sql, args }, ...])   -> runs statements atomically in one transaction
+ *   await db.ready                         -> resolves once the schema is initialised
+ */
 const path = require('path');
 const fs = require('fs');
+const { createClient } = require('@libsql/client');
+const schema = require('./schema');
 
-let Database = null;
-try {
-  Database = require('better-sqlite3');
-} catch (err) {
-  console.warn('[DB] better-sqlite3 native addon could not be loaded:', err.message);
-}
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const bundledDbPath = path.join(__dirname, 'alhassan.db');
 
-const originalDbPath = path.join(__dirname, 'alhassan.db');
-let dbPath = originalDbPath;
+const toFileUrl = (p) => 'file:' + p.replace(/\\/g, '/');
 
-// On Vercel / AWS Lambda, the app directory is read-only. Copy db to /tmp for full read-write operations
-if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-  const tmpDbPath = path.join('/tmp', 'alhassan.db');
-  try {
-    if (!fs.existsSync(tmpDbPath) && fs.existsSync(originalDbPath)) {
-      fs.copyFileSync(originalDbPath, tmpDbPath);
-      console.log('[DB] Successfully copied alhassan.db to /tmp for Vercel execution');
-    }
-    if (fs.existsSync(tmpDbPath)) {
-      dbPath = tmpDbPath;
-    }
-  } catch (err) {
-    console.warn('[DB] Could not copy database to /tmp:', err.message);
+function resolveConnection() {
+  const remoteUrl = (process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL || '').trim();
+  if (remoteUrl) {
+    return {
+      mode: 'turso',
+      persistent: true,
+      config: {
+        url: remoteUrl,
+        authToken: (process.env.TURSO_AUTH_TOKEN || process.env.LIBSQL_AUTH_TOKEN || '').trim() || undefined,
+      },
+    };
   }
-}
 
-let db = null;
-
-if (Database) {
-  try {
-    db = new Database(dbPath);
-
+  if (isServerless) {
+    // Read-only deployment filesystem: work on a temporary copy. Not durable.
+    const tmpPath = path.join('/tmp', 'alhassan.db');
     try {
-      db.pragma('journal_mode = WAL');
-      db.pragma('foreign_keys = ON');
-    } catch (e) {
-      // WAL may not be allowed on some filesystems, continue silently
-    }
-
-    // Initialize core schema safely
-    try {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS admin (
-          id INTEGER PRIMARY KEY,
-          username TEXT NOT NULL UNIQUE,
-          password_hash TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS videos (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          title TEXT NOT NULL,
-          description TEXT,
-          youtube_url TEXT NOT NULL,
-          thumbnail_url TEXT,
-          category TEXT DEFAULT 'General',
-          is_featured INTEGER DEFAULT 0,
-          youtube_id TEXT,
-          published_at DATETIME,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS past_questions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          title TEXT NOT NULL,
-          description TEXT,
-          year INTEGER,
-          subject TEXT,
-          file_path TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS access_tokens (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          token TEXT UNIQUE NOT NULL,
-          type TEXT NOT NULL,
-          identifier TEXT,
-          payment_ref TEXT,
-          expires_at DATETIME NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS portfolio (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          title TEXT NOT NULL,
-          type TEXT DEFAULT 'publication',
-          description TEXT,
-          link TEXT,
-          year INTEGER,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS analytics_pageviews (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          path TEXT NOT NULL,
-          referrer TEXT,
-          user_agent TEXT,
-          ip_hash TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS student_feedback (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          student_identifier TEXT,
-          name TEXT,
-          programme TEXT,
-          level TEXT,
-          reason TEXT,
-          suggestions TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS contact_submissions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          type TEXT DEFAULT 'inquiry',
-          name TEXT NOT NULL,
-          email TEXT NOT NULL,
-          phone TEXT,
-          student_id TEXT,
-          subject TEXT,
-          message TEXT,
-          preferred_date TEXT,
-          preferred_time TEXT,
-          purpose TEXT,
-          status TEXT DEFAULT 'pending',
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS payments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          reference TEXT UNIQUE NOT NULL,
-          amount REAL NOT NULL,
-          currency TEXT DEFAULT 'GHS',
-          email TEXT NOT NULL,
-          customer_name TEXT,
-          channel TEXT DEFAULT 'paystack',
-          status TEXT DEFAULT 'success',
-          paid_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          metadata TEXT
-        );
-      `);
-    } catch (schemaErr) {
-      console.warn('[DB] Schema init warning:', schemaErr.message);
-    }
-
-  } catch (err) {
-    console.error('[DB] SQLite connection failed:', err.message);
-    db = null;
-  }
-}
-
-// Resilient Fallback Engine if SQLite native module cannot run on environment
-if (!db) {
-  console.log('[DB] Activating fallback data layer from JSON files');
-
-  const loadJSON = (filename, fallback = []) => {
-    try {
-      const p = path.join(__dirname, '../data', filename);
-      if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (!fs.existsSync(tmpPath) && fs.existsSync(bundledDbPath)) {
+        fs.copyFileSync(bundledDbPath, tmpPath);
       }
-    } catch (e) {}
-    return fallback;
-  };
+    } catch (err) {
+      console.warn('[DB] Could not copy bundled database to /tmp:', err.message);
+    }
+    console.warn(
+      '[DB] ⚠️  TURSO_DATABASE_URL is not set. Using a temporary /tmp copy of SQLite — admin changes ' +
+        '(prices, uploads, payments) will NOT persist on serverless hosting. Configure Turso.'
+    );
+    return { mode: 'tmp-sqlite', persistent: false, config: { url: toFileUrl(tmpPath) } };
+  }
 
-  const videosData = loadJSON('defaultVideos.json');
-  const portfolioData = loadJSON('defaultPortfolio.json');
-  const settingsData = loadJSON('defaultSettings.json', {});
-
-  db = {
-    prepare: (sql) => {
-      const lower = sql.toLowerCase();
-      return {
-        all: (...params) => {
-          if (lower.includes('from videos')) {
-            if (lower.includes('is_featured = 1')) {
-              return videosData.filter(v => v.is_featured === 1 || v.is_featured === true);
-            }
-            if (lower.includes('distinct category')) {
-              const cats = Array.from(new Set(videosData.map(v => v.category).filter(Boolean))).sort();
-              return cats.map(c => ({ category: c }));
-            }
-            return videosData;
-          }
-          if (lower.includes('from portfolio')) {
-            if (params.length > 0 && params[0]) {
-              return portfolioData.filter(p => p.type === params[0]);
-            }
-            return portfolioData;
-          }
-          if (lower.includes('from settings')) {
-            return Object.entries(settingsData).map(([key, value]) => ({ key, value }));
-          }
-          if (lower.includes('from past_questions')) {
-            return [];
-          }
-          return [];
-        },
-        get: (...params) => {
-          if (lower.includes('from admin')) {
-            // Default admin user fallback
-            return {
-              id: 1,
-              username: 'Alhassan',
-              password_hash: '$2b$10$w8213Jb/kkyyE5gXgA1gDeY3J4qE8h.o3FqgQe9/2i3yvQzK8jWd6'
-            };
-          }
-          if (lower.includes('count(*)')) {
-            if (lower.includes('videos')) return { count: videosData.length };
-            if (lower.includes('portfolio')) return { count: portfolioData.length };
-            return { count: 0 };
-          }
-          if (lower.includes('from videos')) {
-            return videosData[0] || null;
-          }
-          if (lower.includes('from settings')) {
-            return { value: '20' };
-          }
-          return null;
-        },
-        run: (...params) => {
-          return { changes: 1, lastInsertRowid: Date.now() };
-        }
-      };
-    },
-    transaction: (fn) => fn,
-    exec: () => {},
-    pragma: () => {}
-  };
+  const localPath = process.env.SQLITE_PATH ? path.resolve(process.env.SQLITE_PATH) : bundledDbPath;
+  return { mode: 'local-sqlite', persistent: true, config: { url: toFileUrl(localPath) } };
 }
+
+const connection = resolveConnection();
+const client = createClient({ ...connection.config, intMode: 'number' });
+
+// libSQL accepts null but not undefined; booleans are stored as 0/1 like better-sqlite3 did.
+function normalizeArgs(params) {
+  const flat = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+  return flat.map((v) => {
+    if (v === undefined) return null;
+    if (typeof v === 'boolean') return v ? 1 : 0;
+    if (typeof v === 'bigint') return Number(v);
+    return v;
+  });
+}
+
+function toObjects(rs) {
+  return rs.rows.map((row) => {
+    const obj = {};
+    rs.columns.forEach((col, i) => {
+      const val = row[i];
+      obj[col] = typeof val === 'bigint' ? Number(val) : val;
+    });
+    return obj;
+  });
+}
+
+const ready = (async () => {
+  if (connection.mode !== 'turso') {
+    // Local SQLite: WAL improves concurrency. Ignore if the filesystem refuses it.
+    try {
+      await client.execute('PRAGMA journal_mode = WAL');
+    } catch (e) {}
+  }
+  await client.executeMultiple(schema);
+  console.log(`[DB] Connected (${connection.mode}${connection.persistent ? '' : ', NOT persistent'})`);
+})();
+
+// Keep the process alive on failure; requests will surface the error through db.ready.
+ready.catch((err) => console.error('[DB] Initialisation failed:', err.message));
+
+const db = {
+  mode: connection.mode,
+  persistent: connection.persistent,
+  ready,
+  client,
+
+  prepare(sql) {
+    return {
+      async get(...params) {
+        const rs = await client.execute({ sql, args: normalizeArgs(params) });
+        return toObjects(rs)[0];
+      },
+      async all(...params) {
+        const rs = await client.execute({ sql, args: normalizeArgs(params) });
+        return toObjects(rs);
+      },
+      async run(...params) {
+        const rs = await client.execute({ sql, args: normalizeArgs(params) });
+        return {
+          changes: rs.rowsAffected,
+          lastInsertRowid: rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : undefined,
+        };
+      },
+    };
+  },
+
+  async batch(statements) {
+    if (!statements.length) return [];
+    return client.batch(
+      statements.map((s) => ({ sql: s.sql, args: normalizeArgs(s.args || []) })),
+      'write'
+    );
+  },
+
+  async exec(sql) {
+    return client.executeMultiple(sql);
+  },
+};
 
 module.exports = db;

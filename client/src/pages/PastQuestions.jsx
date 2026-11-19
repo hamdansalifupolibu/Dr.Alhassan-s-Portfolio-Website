@@ -72,7 +72,7 @@ function AccessGate({ onAccessGranted }) {
   const [paystackKey, setPaystackKey] = useState(
     import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_31edc9824f6209e93c2ec11b860d8899f6400db2'
   );
-  const [priceGHS, setPriceGHS] = useState(20);
+  const [priceGHS, setPriceGHS] = useState(null); // live fee from /access/public-config
   const [paymentEnabled, setPaymentEnabled] = useState(true);
 
   // Congratulatory modal state for UMaT students
@@ -153,7 +153,27 @@ function AccessGate({ onAccessGranted }) {
       return;
     }
 
-    const currentPrice = settings.nonUmatPrice ? Number(settings.nonUmatPrice) : priceGHS || 20;
+    // Always charge the fee currently saved by the admin (fetched fresh, never a cached/default value)
+    let currentPrice;
+    try {
+      const { data: liveCfg } = await API.get('/access/public-config', { params: { _: Date.now() } });
+      currentPrice = Number(liveCfg.priceGHS);
+      setPriceGHS(currentPrice);
+      if (liveCfg.paymentEnabled === false) {
+        setPayError('Online payment is currently paused by the administrator. Please try again later.');
+        setPaying(false);
+        return;
+      }
+    } catch {
+      setPayError('Could not load the current access fee. Please check your connection and try again.');
+      setPaying(false);
+      return;
+    }
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      setPayError('The access fee is not configured correctly. Please contact the administrator.');
+      setPaying(false);
+      return;
+    }
     const amountInPesewas = Math.round(currentPrice * 100);
     const reference = 'PQ_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
 
@@ -402,7 +422,7 @@ function AccessGate({ onAccessGranted }) {
                   Full 1-Year Access Fee
                 </p>
                 <p className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mt-0.5">
-                  GH₵ <span className="text-blue-600 dark:text-blue-400">{settings.nonUmatPrice || priceGHS || '20'}</span>
+                  GH₵ <span className="text-blue-600 dark:text-blue-400">{priceGHS ?? settings.nonUmatPrice ?? '…'}</span>
                 </p>
                 <p className="text-slate-500 text-xs mt-1">Instant unlock via MTN MoMo, Telecel Cash, or Visa/Mastercard</p>
               </div>
@@ -477,7 +497,7 @@ function AccessGate({ onAccessGranted }) {
                 ) : (
                   <>
                     <CreditCard className="w-4 h-4" />
-                    <span>Pay GH₵ {settings.nonUmatPrice || priceGHS || '20'} with Paystack</span>
+                    <span>Pay GH₵ {priceGHS ?? settings.nonUmatPrice ?? '…'} with Paystack</span>
                   </>
                 )}
               </button>

@@ -69,7 +69,9 @@ export default function SiteSettings() {
     setSuccess('');
 
     try {
-      await API.put('/settings', form);
+      // nonUmatPrice / paymentEnabled are owned by the Dashboard fee control — never send them from here
+      const { nonUmatPrice: _fee, paymentEnabled: _enabled, ...payload } = form;
+      await API.put('/settings', payload);
       const msg = 'Site content and information updated successfully!';
       setSuccess(msg);
       toast.success(msg);
@@ -314,16 +316,15 @@ export default function SiteSettings() {
                   GH₵
                 </span>
                 <input
-                  type="number"
-                  name="nonUmatPrice"
+                  type="text"
                   value={form.nonUmatPrice}
-                  onChange={handleChange}
-                  className={`${inputCls} pl-12 font-mono font-bold`}
-                  placeholder="20"
+                  readOnly
+                  aria-readonly="true"
+                  className={`${inputCls} pl-12 font-mono font-bold opacity-70 cursor-not-allowed`}
                 />
               </div>
               <p className="mt-1 text-xs text-slate-500">
-                Price displayed on the past questions paywall for non-students.
+                Change the fee from the <a href="/admin#payment-settings" className="font-semibold text-emerald-600 dark:text-emerald-400 underline">Dashboard → Payment &amp; Access Fee Control</a>.
               </p>
             </div>
           </div>

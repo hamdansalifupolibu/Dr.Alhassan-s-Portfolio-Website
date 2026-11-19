@@ -1,5 +1,57 @@
 # 🚀 Vercel & Production Deployment Guide
 
+## ✅ Permanent storage on Vercel (Turso + Vercel Blob) — REQUIRED
+
+Vercel's free serverless functions have **no permanent disk**. Every instance gets its own temporary `/tmp`,
+so without the setup below admin changes (access fee, uploaded PDFs, payments, student tokens) randomly
+disappear or differ between visitors. The app now stores everything permanently in:
+
+| What | Where | Cost |
+| :--- | :--- | :--- |
+| Database (same SQLite tables & SQL) | **Turso** (hosted SQLite / libSQL) | Free tier |
+| Past-question PDFs | **Vercel Blob** (uploaded directly from the admin's browser, up to 100 MB) | Free tier (Hobby) |
+
+### 1. Create the Turso database
+1. Sign up at <https://turso.tech> and create a database (e.g. `dr-alhassan`), region closest to your Vercel functions.
+2. On the database page copy the **Database URL** (`libsql://…turso.io`).
+3. Create a **database token** and copy it.
+
+### 2. Create the Vercel Blob store
+1. Vercel dashboard → your project → **Storage** → **Create** → **Blob**, and connect it to the project.
+2. Vercel adds `BLOB_READ_WRITE_TOKEN` to the project automatically.
+
+### 3. Add environment variables in Vercel (Project → Settings → Environment Variables)
+```env
+TURSO_DATABASE_URL=libsql://<your-db>-<your-org>.turso.io
+TURSO_AUTH_TOKEN=<your-turso-token>
+BLOB_READ_WRITE_TOKEN=<added automatically by step 2>
+JWT_SECRET=<a long random string>
+PAYSTACK_SECRET_KEY=<your Paystack secret key>
+```
+
+### 4. Copy your existing data into Turso (one time, from your computer)
+Put the same three values (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `BLOB_READ_WRITE_TOKEN`) in `server/.env`, then:
+```bash
+cd server
+npm run migrate:turso
+```
+This copies every table from `server/db/alhassan.db` (videos, settings/fee, admin login, payments, tokens…)
+and uploads any PDFs in `server/uploads` to Vercel Blob.
+
+### 5. Redeploy and verify
+Open `https://<your-site>/api/health`. You should see:
+```json
+"storage": { "database": "turso", "databasePersistent": true, "pdfStorage": "vercel-blob", "pdfPersistent": true }
+```
+The Admin Dashboard also shows an amber warning in the fee panel if permanent storage is not connected.
+
+> Local development needs none of this: without `TURSO_DATABASE_URL` the server uses `server/db/alhassan.db`,
+> and without `BLOB_READ_WRITE_TOKEN` PDFs are saved to `server/uploads`.
+
+---
+
+## Legacy notes (separate frontend / backend hosting)
+
 This guide covers deploying **Dr. Alhassan Osman's Academic Portfolio & Examination Portal** with complete environment variable configuration.
 
 ---
