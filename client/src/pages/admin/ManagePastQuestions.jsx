@@ -38,9 +38,15 @@ export default function ManagePastQuestions() {
       const { data } = await API.get('/past-questions');
       const list = Array.isArray(data) ? data : (data?.data ?? []);
       setQuestions([...list].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-    } catch {
-      setError('Failed to load past questions.');
-      toast.error('Failed to load past questions.');
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.error || err.message;
+      const msg =
+        status === 401 || status === 403
+          ? 'Your admin session has expired. Please sign out and log in again.'
+          : `Failed to load past questions${status ? ` (${status})` : ''}: ${detail}`;
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

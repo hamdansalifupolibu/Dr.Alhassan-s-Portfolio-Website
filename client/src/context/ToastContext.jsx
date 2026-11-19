@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 
@@ -25,11 +25,16 @@ export function ToastProvider({ children }) {
     [removeToast]
   );
 
-  const toast = {
-    success: (message, title = 'Success') => addToast({ type: 'success', message, title }),
-    error: (message, title = 'Error') => addToast({ type: 'error', message, title }),
-    info: (message, title = 'Notice') => addToast({ type: 'info', message, title }),
-  };
+  // Must be a stable object: pages list `toast` in useCallback/useEffect dependencies. A new object on
+  // every render made each error toast re-trigger the failing request, flooding the screen with errors.
+  const toast = useMemo(
+    () => ({
+      success: (message, title = 'Success') => addToast({ type: 'success', message, title }),
+      error: (message, title = 'Error') => addToast({ type: 'error', message, title }),
+      info: (message, title = 'Notice') => addToast({ type: 'info', message, title }),
+    }),
+    [addToast]
+  );
 
   return (
     <ToastContext.Provider value={toast}>

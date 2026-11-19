@@ -92,6 +92,10 @@ const verifyAccess = async (req, res, next) => {
 
   const accessToken = req.headers['x-access-token'] || req.query.token;
   if (!accessToken) {
+    if (candidates.length) {
+      // An Authorization token was sent but is not a valid admin JWT (expired, or JWT_SECRET changed)
+      console.warn(`[PastQuestions] ${req.method} ${req.originalUrl.split('?')[0]}: admin token rejected (expired or invalid)`);
+    }
     return res.status(403).json({ error: 'Access denied: No access token provided' });
   }
 
