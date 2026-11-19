@@ -6,6 +6,7 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const authMiddleware = require('../middleware/authMiddleware');
+const { normalizeAccess, tokenCoversAccess } = require('../lib/accessRules');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dr-alhassan-admin-secret-2024';
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -74,8 +75,10 @@ const maybeMultipart = (req, res, next) => {
   });
 };
 
-// Admin JWT (header or ?token=) OR a valid student/paid access token
-const verifyAccess = async (req, res, next) => {
+// Works out who is asking, WITHOUT rejecting anyone: the listing is public (titles only) and each
+// route decides what the viewer may open using tokenCoversAccess().
+//   { isAdmin, tokenType: 'free'|'paid'|'umat'|null, identifier, reason }
+async function resolveViewer(req) {
   const authHeader = req.headers.authorization;
   const candidates = [];
   if (authHeader && authHeader.startsWith('Bearer ')) candidates.push(authHeader.slice(7));
@@ -83,36 +86,31 @@ const verifyAccess = async (req, res, next) => {
 
   for (const t of candidates) {
     try {
-      req.admin = jwt.verify(t, JWT_SECRET);
-      return next();
+      jwt.verify(t, JWT_SECRET);
+      return { isAdmin: true, tokenType: null, identifier: 'admin' };
     } catch (e) {
-      // not an admin token — fall through to access-token check
+      // not an admin token — fall through to the student pass check
     }
   }
 
   const accessToken = req.headers['x-access-token'] || req.query.token;
   if (!accessToken) {
-    if (candidates.length) {
-      // An Authorization token was sent but is not a valid admin JWT (expired, or JWT_SECRET changed)
+    if (authHeader) {
       console.warn(`[PastQuestions] ${req.method} ${req.originalUrl.split('?')[0]}: admin token rejected (expired or invalid)`);
     }
-    return res.status(403).json({ error: 'Access denied: No access token provided' });
+    return { isAdmin: false, tokenType: null, reason: 'none' };
   }
 
-  try {
-    const tokenRecord = await db.prepare('SELECT * FROM access_tokens WHERE token = ?').get(accessToken);
-    if (!tokenRecord) {
-      return res.status(403).json({ error: 'Access denied: Invalid token' });
-    }
-    if (new Date(tokenRecord.expires_at) < new Date()) {
-      return res.status(403).json({ error: 'Access denied: Token expired' });
-    }
-    req.accessInfo = tokenRecord;
-    next();
-  } catch (err) {
-    next(err);
-  }
-};
+  const record = await db.prepare('SELECT type, identifier, expires_at FROM access_tokens WHERE token = ?').get(String(accessToken));
+  if (!record) return { isAdmin: false, tokenType: null, reason: 'invalid' };
+  if (new Date(record.expires_at) < new Date()) return { isAdmin: false, tokenType: null, reason: 'expired' };
+  return { isAdmin: false, tokenType: record.type, identifier: record.identifier };
+}
+
+const canOpen = (viewer, paper) => viewer.isAdmin || tokenCoversAccess(viewer.tokenType, paper.access);
+
+// Strip storage paths and add the per-viewer `unlocked` flag
+const toPublic = (viewer) => ({ file_path, ...q }) => ({ ...q, access: normalizeAccess(q.access), unlocked: canOpen(viewer, q) });
 
 // GET /api/past-questions/upload-config — admin: tells the UI which upload path to use
 router.get('/upload-config', authMiddleware, (req, res) => {
@@ -150,17 +148,32 @@ router.post('/blob-token', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/past-questions — requires access token
-router.get('/', verifyAccess, async (req, res) => {
-  const questions = await db.prepare('SELECT * FROM past_questions ORDER BY year DESC, created_at DESC').all();
-  // Never expose raw storage URLs in listings; downloads go through the access-checked endpoint.
-  res.json(questions.map(({ file_path, ...q }) => q));
+// GET /api/past-questions — public catalogue (titles only). Optional ?access=free|paid.
+// Each paper carries `unlocked` for THIS viewer, so the page shows Download vs. locked.
+router.get('/', async (req, res) => {
+  const viewer = await resolveViewer(req);
+  const filter = req.query.access ? normalizeAccess(String(req.query.access)) : null;
+  const questions = filter
+    ? await db.prepare('SELECT * FROM past_questions WHERE access = ? ORDER BY year DESC, created_at DESC').all(filter)
+    : await db.prepare('SELECT * FROM past_questions ORDER BY year DESC, created_at DESC').all();
+  res.set('Cache-Control', 'no-store');
+  res.json(questions.map(toPublic(viewer)));
 });
 
-// GET /api/past-questions/:id/download — requires access token
-router.get('/:id/download', verifyAccess, async (req, res) => {
+// GET /api/past-questions/:id/download — enforced per paper: free pass for free papers, paid pass for paid
+router.get('/:id/download', async (req, res) => {
   const question = await db.prepare('SELECT * FROM past_questions WHERE id = ?').get(req.params.id);
   if (!question) return res.status(404).json({ error: 'Past question not found' });
+
+  const viewer = await resolveViewer(req);
+  if (!canOpen(viewer, question)) {
+    const isPaid = normalizeAccess(question.access) === 'paid';
+    return res.status(403).json({
+      error: isPaid ? 'This paper requires paid access' : 'Please fill the free access form first',
+      access: normalizeAccess(question.access),
+      reason: viewer.reason || 'insufficient',
+    });
+  }
 
   if (isRemoteFile(question.file_path)) {
     // Stored in Vercel Blob: redirect to the file (streaming through a serverless function would hit size limits)
@@ -184,6 +197,7 @@ router.get('/:id/download', verifyAccess, async (req, res) => {
 //  - Local mode: multipart form with field "file"
 router.post('/', authMiddleware, maybeMultipart, async (req, res) => {
   const { title, description, year, subject, blobUrl } = req.body || {};
+  const access = normalizeAccess(req.body?.access); // Paid unless the lecturer explicitly chose Free
 
   const cleanupLocal = () => {
     if (req.file) fs.promises.unlink(req.file.path).catch(() => {});
@@ -213,13 +227,14 @@ router.post('/', authMiddleware, maybeMultipart, async (req, res) => {
 
   try {
     const result = await db
-      .prepare('INSERT INTO past_questions (title, description, year, subject, file_path) VALUES (?, ?, ?, ?, ?)')
+      .prepare('INSERT INTO past_questions (title, description, year, subject, file_path, access) VALUES (?, ?, ?, ?, ?, ?)')
       .run(
         String(title).trim(),
         description ? String(description).trim() : null,
         Number.isFinite(parsedYear) ? parsedYear : null,
         subject ? String(subject).trim() : null,
-        storedPath
+        storedPath,
+        access
       );
 
     const newQuestion = await db.prepare('SELECT * FROM past_questions WHERE id = ?').get(result.lastInsertRowid);
@@ -233,19 +248,33 @@ router.post('/', authMiddleware, maybeMultipart, async (req, res) => {
   }
 });
 
+// PATCH /api/past-questions/:id/access — admin only: switch a paper between Free and Paid
+router.patch('/:id/access', authMiddleware, async (req, res) => {
+  const requested = req.body?.access;
+  if (!['free', 'paid'].includes(requested)) {
+    return res.status(400).json({ error: "access must be 'free' or 'paid'" });
+  }
+  const result = await db.prepare('UPDATE past_questions SET access = ? WHERE id = ?').run(requested, req.params.id);
+  if (!result.changes) return res.status(404).json({ error: 'Past question not found' });
+  const updated = await db.prepare('SELECT * FROM past_questions WHERE id = ?').get(req.params.id);
+  const { file_path, ...publicFields } = updated;
+  res.json({ ...publicFields, message: `"${updated.title}" is now ${requested === 'free' ? 'FREE' : 'PAID'}.` });
+});
+
 // PUT /api/past-questions/:id — admin only (update metadata)
 router.put('/:id', authMiddleware, async (req, res) => {
-  const { title, description, year, subject } = req.body;
+  const { title, description, year, subject, access } = req.body;
   const question = await db.prepare('SELECT * FROM past_questions WHERE id = ?').get(req.params.id);
   if (!question) return res.status(404).json({ error: 'Past question not found' });
 
   await db.prepare(`
-    UPDATE past_questions SET title = ?, description = ?, year = ?, subject = ? WHERE id = ?
+    UPDATE past_questions SET title = ?, description = ?, year = ?, subject = ?, access = ? WHERE id = ?
   `).run(
     title || question.title,
     description !== undefined ? description : question.description,
     year ? parseInt(year, 10) : question.year,
     subject || question.subject,
+    access !== undefined ? normalizeAccess(access) : normalizeAccess(question.access),
     req.params.id
   );
 

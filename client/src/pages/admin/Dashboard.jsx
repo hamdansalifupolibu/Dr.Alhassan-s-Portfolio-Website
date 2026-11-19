@@ -57,6 +57,7 @@ export default function Dashboard() {
   const [paymentConfigMsg, setPaymentConfigMsg] = useState(null);
   const [recentVideos, setRecentVideos] = useState([]);
   const [studentFeedback, setStudentFeedback] = useState([]);
+  const [freeSignups, setFreeSignups] = useState({ signups: [], total: 0 });
   const [contactSubmissions, setContactSubmissions] = useState([]);
   const [contactFilter, setContactFilter] = useState('all');
   const [updatingContactId, setUpdatingContactId] = useState(null);
@@ -67,13 +68,14 @@ export default function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [analyticsRes, paymentsRes, videosRes, feedbackRes, contactRes, paymentConfigRes] = await Promise.allSettled([
+      const [analyticsRes, paymentsRes, videosRes, feedbackRes, contactRes, paymentConfigRes, freeSignupsRes] = await Promise.allSettled([
         API.get('/analytics/summary'),
         API.get('/access/payments'),
         API.get('/videos'),
         API.get('/access/feedback'),
         API.get('/contact'),
         API.get('/access/payment-config'),
+        API.get('/access/free-signups'),
       ]);
 
       if (analyticsRes.status === 'fulfilled') {
@@ -98,6 +100,13 @@ export default function Dashboard() {
           ? videosRes.value.data
           : videosRes.value.data?.data ?? [];
         setRecentVideos(list.slice(0, 5));
+      }
+
+      if (freeSignupsRes.status === 'fulfilled' && freeSignupsRes.value.data) {
+        setFreeSignups({
+          signups: freeSignupsRes.value.data.signups || [],
+          total: freeSignupsRes.value.data.total || 0,
+        });
       }
 
       if (feedbackRes.status === 'fulfilled') {
@@ -457,7 +466,7 @@ export default function Dashboard() {
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-2xl">
-              Set or update the one-time access fee charged to Non-UMaT students to unlock exam papers, PDF solutions, and marking guides. Updates apply immediately to the Paystack checkout.
+              Set or update the one-time access fee that unlocks every PAID past question and solution for 1 year (all students, UMaT and non-UMaT). Updates apply immediately to the Paystack checkout.
             </p>
           </div>
 
@@ -620,7 +629,7 @@ export default function Dashboard() {
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Official audit log of all Non-UMaT students and external visitors who paid for past questions access.
+              Official audit log of every student who paid to unlock the paid past questions and solutions.
             </p>
           </div>
 
@@ -878,6 +887,64 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* ── Free Past Questions Sign-ups ── */}
+      <div className="mb-8 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm dark:shadow-xl">
+        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <Users size={18} className="text-emerald-500" />
+                Free Past Questions Sign-ups
+              </h2>
+              <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                {freeSignups.total} total
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Students who filled the free access form. Paid students appear in the Paystack payments ledger.
+            </p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="py-12 flex justify-center text-slate-500">
+            <Loader2 className="animate-spin text-emerald-500" size={20} />
+          </div>
+        ) : freeSignups.signups.length === 0 ? (
+          <div className="px-6 py-12 text-center text-slate-500">
+            <Users size={28} className="mx-auto mb-2 text-slate-400 dark:text-slate-600" />
+            <p className="text-xs font-medium text-slate-600 dark:text-slate-400">No free sign-ups yet.</p>
+          </div>
+        ) : (
+          <div className="max-h-[400px] overflow-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/80 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <tr>
+                  <th className="px-6 py-2.5 font-semibold">Name</th>
+                  <th className="px-3 py-2.5 font-semibold">Email</th>
+                  <th className="px-3 py-2.5 font-semibold hidden md:table-cell">Programme</th>
+                  <th className="px-3 py-2.5 font-semibold hidden sm:table-cell">Level</th>
+                  <th className="px-6 py-2.5 font-semibold text-right">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {freeSignups.signups.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                    <td className="px-6 py-2.5 font-semibold text-slate-900 dark:text-slate-100">{s.name}</td>
+                    <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300 break-all">{s.email}</td>
+                    <td className="px-3 py-2.5 text-slate-600 dark:text-slate-400 hidden md:table-cell">{s.programme || '—'}</td>
+                    <td className="px-3 py-2.5 text-slate-600 dark:text-slate-400 hidden sm:table-cell">{s.level || '—'}</td>
+                    <td className="px-6 py-2.5 text-right text-slate-500 whitespace-nowrap">
+                      {s.created_at ? new Date(s.created_at.replace(' ', 'T') + 'Z').toLocaleDateString() : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* ── Student Feedback Section ── */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm dark:shadow-xl">
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -892,7 +959,7 @@ export default function Dashboard() {
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Feedback submitted by UMaT students upon past question verification.
+              Feedback submitted by students (earlier UMaT verifications and surveys).
             </p>
           </div>
         </div>
@@ -917,7 +984,7 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        {fb.name || 'Anonymous UMaT Student'}
+                        {fb.name || 'Anonymous Student'}
                       </h4>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         {fb.programme || 'Programme not specified'}

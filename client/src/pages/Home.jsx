@@ -457,10 +457,10 @@ export default function Home() {
 
           <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-600 dark:text-slate-400">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 font-semibold text-emerald-700 dark:text-emerald-400">
-              <CheckCircle2 size={13} /> Free for UMaT Students
+              <CheckCircle2 size={13} /> Free Past Questions for Everyone
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/10 border border-sky-500/20 px-3 py-1 font-semibold text-sky-700 dark:text-sky-400">
-              <ShieldCheck size={13} /> Paystack Instant Checkout for Non-UMaT
+              <ShieldCheck size={13} /> Paid Papers &amp; Solutions via Paystack
             </span>
           </div>
 

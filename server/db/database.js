@@ -94,6 +94,29 @@ function describeError(err) {
   return parts.filter(Boolean).join(' <- ');
 }
 
+// Columns added after a table already existed. `CREATE TABLE IF NOT EXISTS` never alters an existing
+// table, so each one is added here only if missing — safe to run on every cold start.
+const COLUMN_MIGRATIONS = [
+  { table: 'past_questions', column: 'access', ddl: "ALTER TABLE past_questions ADD COLUMN access TEXT NOT NULL DEFAULT 'paid'" },
+];
+
+async function runMigrations() {
+  for (const m of COLUMN_MIGRATIONS) {
+    const info = await client.execute(`PRAGMA table_info(${m.table})`);
+    const nameIdx = info.columns.indexOf('name');
+    const exists = info.rows.some((r) => r[nameIdx] === m.column);
+    if (!exists) {
+      try {
+        await client.execute(m.ddl);
+        console.log(`[DB] Migration: added ${m.table}.${m.column}`);
+      } catch (err) {
+        // Another instance may have added it at the same moment
+        if (!/duplicate column/i.test(err.message)) throw err;
+      }
+    }
+  }
+}
+
 async function init() {
   if (connection.mode !== 'turso') {
     // Local SQLite: WAL improves concurrency. Ignore if the filesystem refuses it.
@@ -102,6 +125,7 @@ async function init() {
     } catch (e) {}
   }
   await client.executeMultiple(schema);
+  await runMigrations();
   console.log(`[DB] Connected (${connection.mode}${connection.persistent ? '' : ', NOT persistent'})`);
 }
 

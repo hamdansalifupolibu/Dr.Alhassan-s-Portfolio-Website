@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS past_questions (
   year INTEGER,
   subject TEXT,
   file_path TEXT NOT NULL,
+  access TEXT NOT NULL DEFAULT 'paid',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -102,5 +103,16 @@ CREATE TABLE IF NOT EXISTS payments (
   status TEXT DEFAULT 'success',
   paid_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   metadata TEXT
+);
+
+-- Students who unlocked the FREE past questions (info form, no payment)
+CREATE TABLE IF NOT EXISTS free_access_signups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  programme TEXT,
+  level TEXT,
+  token TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `;

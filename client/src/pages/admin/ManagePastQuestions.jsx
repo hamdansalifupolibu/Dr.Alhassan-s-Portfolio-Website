@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Upload, Trash2, FileText, Loader2, AlertCircle, Download, CheckCircle2 } from 'lucide-react';
+import { Upload, Trash2, FileText, Loader2, AlertCircle, Download, CheckCircle2, Lock, Unlock } from 'lucide-react';
 import AdminLayout from '../../components/AdminLayout';
 import API from '../../lib/api';
 import { useToast } from '../../context/ToastContext';
@@ -11,7 +11,13 @@ const isPdf = (f) => f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name
 const inputCls =
   'w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm';
 
-const EMPTY_FORM = { title: '', subject: '', year: '', description: '' };
+// New papers are PAID unless the lecturer deliberately picks Free
+const EMPTY_FORM = { title: '', subject: '', year: '', description: '', access: 'paid' };
+
+const ACCESS_OPTIONS = [
+  { value: 'paid', label: 'Paid', hint: 'Unlocked only after Paystack payment', Icon: Lock, tone: 'blue' },
+  { value: 'free', label: 'Free', hint: 'Open to anyone who fills the free access form', Icon: Unlock, tone: 'emerald' },
+];
 
 export default function ManagePastQuestions() {
   const toast = useToast();
@@ -30,6 +36,7 @@ export default function ManagePastQuestions() {
 
   /* delete */
   const [deleteId, setDeleteId]   = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
 
   const fetchQuestions = useCallback(async () => {
     setLoading(true);
@@ -89,6 +96,7 @@ export default function ManagePastQuestions() {
         subject:     form.subject.trim(),
         year:        form.year,
         description: form.description.trim(),
+        access:      form.access,
       };
 
       if (cfg?.mode === 'blob') {
@@ -136,6 +144,22 @@ export default function ManagePastQuestions() {
     }
   };
 
+  /* ── free ⇄ paid ────────────────────────────────────────────────── */
+  const handleToggleAccess = async (q) => {
+    const qid = q.id || q._id;
+    const next = q.access === 'free' ? 'paid' : 'free';
+    setTogglingId(qid);
+    try {
+      const { data } = await API.patch(`/past-questions/${qid}/access`, { access: next });
+      setQuestions((prev) => prev.map((x) => ((x.id || x._id) === qid ? { ...x, access: data.access } : x)));
+      toast.success(data.message || `Moved to ${next}.`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not change the access level.');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   /* ── delete ─────────────────────────────────────────────────────── */
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this past question? This cannot be undone.')) return;
@@ -162,7 +186,7 @@ export default function ManagePastQuestions() {
           </span>
         </h1>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-          Upload and manage semester examination question papers (PDF) accessible by verified students and paid users.
+          Upload and manage semester examination question papers (PDF) Mark each paper Free (open to anyone after a short info form) or Paid (unlocked by Paystack payment).
         </p>
       </div>
 
@@ -235,6 +259,43 @@ export default function ManagePastQuestions() {
             />
           </div>
 
+          {/* Access level */}
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+              Access <span className="text-red-500">*</span>
+            </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Access level">
+              {ACCESS_OPTIONS.map(({ value, label, hint, Icon, tone }) => {
+                const active = form.access === value;
+                const activeCls =
+                  tone === 'blue'
+                    ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500'
+                    : 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500';
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={submitting}
+                    onClick={() => setForm((p) => ({ ...p, access: value }))}
+                    className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-left transition cursor-pointer ${
+                      active ? activeCls : 'border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500'
+                    }`}
+                  >
+                    <Icon size={18} className={tone === 'blue' ? 'mt-0.5 text-blue-500' : 'mt-0.5 text-emerald-500'} />
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {label}{value === 'paid' && ' (default)'}
+                      </span>
+                      <span className="block text-xs text-slate-500 dark:text-slate-400">{hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* File picker */}
           <div className="sm:col-span-2">
             <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
@@ -291,7 +352,9 @@ export default function ManagePastQuestions() {
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
             Uploaded Exam Papers ({questions.length})
           </h2>
-          <span className="text-xs text-slate-500">Available to students with valid token</span>
+          <span className="text-xs text-slate-500">
+            {questions.filter((q) => q.access === 'free').length} free · {questions.filter((q) => q.access !== 'free').length} paid
+          </span>
         </div>
 
         {loading ? (
@@ -316,6 +379,15 @@ export default function ManagePastQuestions() {
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-900 dark:text-slate-100 truncate">{q.title}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      {q.access === 'free' ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-700 dark:text-emerald-400">
+                          <Unlock size={11} /> FREE
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-blue-500/15 px-2 py-0.5 font-bold text-blue-700 dark:text-blue-400">
+                          <Lock size={11} /> PAID
+                        </span>
+                      )}
                       {q.subject && (
                         <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-slate-700 dark:text-slate-300 font-medium">
                           {q.subject}
@@ -332,7 +404,22 @@ export default function ManagePastQuestions() {
                       <p className="mt-1 text-xs text-slate-600 dark:text-slate-400 line-clamp-1">{q.description}</p>
                     )}
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <button
+                      onClick={() => handleToggleAccess(q)}
+                      disabled={togglingId === qid}
+                      title={q.access === 'free' ? 'Move to the paid section' : 'Make this paper free'}
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {togglingId === qid ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : q.access === 'free' ? (
+                        <Lock size={13} />
+                      ) : (
+                        <Unlock size={13} />
+                      )}
+                      {q.access === 'free' ? 'Make Paid' : 'Make Free'}
+                    </button>
                     <a
                       href={downloadUrl}
                       target="_blank"

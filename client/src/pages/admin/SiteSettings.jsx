@@ -305,11 +305,11 @@ export default function SiteSettings() {
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 shadow-sm dark:shadow-xl">
             <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-3">
               <DollarSign className="text-emerald-500" size={20} />
-              Past Questions Access Fee (Non-UMaT)
+              Paid Past Questions Access Fee
             </h2>
             <div className="max-w-xs">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                Non-UMaT Student Access Fee (GH₵)
+                Paid Access Fee (GH₵)
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 font-bold text-xs">

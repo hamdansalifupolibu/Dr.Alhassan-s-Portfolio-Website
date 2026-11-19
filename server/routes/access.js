@@ -3,125 +3,78 @@ const router = express.Router();
 const crypto = require('crypto');
 const db = require('../db/database');
 const authMiddleware = require('../middleware/authMiddleware');
-
-// Valid UMAT email domains
-const UMAT_EMAIL_DOMAINS = ['st.umat.edu.gh', 'umat.edu.gh'];
-
-// 1) 10-digit student ID / reference number (e.g., 4100813923)
-const TEN_DIGIT_ID_REGEX = /^\d{10}$/;
-
-// 2) Formatted or unformatted department index number:
-// Examples:
-// - FCM4100813923 or EL4100813923 or MN4100813923
-// - FCM.41.008.139.23 or EL.41.008.139.23
-// - UMAT/2024/1234 or UG/22/0456
-const INDEX_NUMBER_REGEX = /^[A-Z]{2,4}(\.?\d{1,4}){3,6}$/i;
-const LEGACY_REF_REGEX = /^(UMAT|UG)\/\d{2,4}\/\d{3,6}$/i;
+const { tokenCoversAccess } = require('../lib/accessRules');
 
 const generateToken = () => crypto.randomBytes(32).toString('hex');
 
-const TOKEN_DURATION_HOURS = 72; // 3 days access
+const FREE_TOKEN_DAYS = 365;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const clean = (v, max = 120) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
-// Helper function to validate UMaT identifiers
-function validateUmatStudent(rawInput) {
-  if (!rawInput || typeof rawInput !== 'string') return { isValid: false };
+// POST /api/access/free-signup — anyone (UMaT or not) fills the short info form to open FREE papers
+router.post('/free-signup', async (req, res) => {
+  const name = clean(req.body?.name);
+  const email = clean(req.body?.email, 160).toLowerCase();
+  const programme = clean(req.body?.programme);
+  const level = clean(req.body?.level, 40);
 
-  const trimmed = rawInput.trim();
-  const lower = trimmed.toLowerCase();
+  if (!name) return res.status(400).json({ error: 'Please enter your full name.' });
+  if (!EMAIL_REGEX.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
 
-  // A) Student Email Check
-  if (lower.includes('@')) {
-    const domain = lower.split('@')[1];
-    if (UMAT_EMAIL_DOMAINS.includes(domain)) {
-      return {
-        isValid: true,
-        type: 'email',
-        identifier: lower,
-        detectedLabel: `Student Email (${lower})`,
-      };
-    }
-    return {
-      isValid: false,
-      reason: 'Please use your official UMaT student email ending in @st.umat.edu.gh',
-    };
-  }
+  // Re-use an active free (or paid) pass for the same email instead of piling up tokens
+  const existing = await db
+    .prepare(
+      "SELECT token, type FROM access_tokens WHERE identifier = ? AND type IN ('free', 'paid') AND expires_at > datetime('now') ORDER BY type = 'paid' DESC LIMIT 1"
+    )
+    .get(email);
 
-  // B) 10-digit Student ID / Reference Number (e.g. 4100813923)
-  const digitsOnly = trimmed.replace(/\s+/g, '');
-  if (TEN_DIGIT_ID_REGEX.test(digitsOnly)) {
-    return {
-      isValid: true,
-      type: 'student_id',
-      identifier: digitsOnly,
-      detectedLabel: `10-digit Student ID (${digitsOnly})`,
-    };
-  }
+  const token = existing ? existing.token : generateToken();
+  const expiresAt = new Date(Date.now() + FREE_TOKEN_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // C) Department Index Number (e.g., FCM4100813923 or FCM.41.008.139.23)
-  // Clean dots and spaces if any
-  const normalizedIndex = trimmed.toUpperCase().replace(/\s+/g, '');
-  if (INDEX_NUMBER_REGEX.test(normalizedIndex) || LEGACY_REF_REGEX.test(normalizedIndex)) {
-    return {
-      isValid: true,
-      type: 'index_number',
-      identifier: normalizedIndex,
-      detectedLabel: `Index Number (${normalizedIndex})`,
-    };
-  }
-
-  return {
-    isValid: false,
-    reason: 'Invalid UMaT student identifier. Provide a valid student email, 10-digit student ID, or index number (e.g. FCM4100813923 or FCM.41.008.139.23).',
-  };
-}
-
-// POST /api/access/verify-student — UMAT student verification
-router.post('/verify-student', async (req, res) => {
-  const { identifier } = req.body;
-
-  if (!identifier) {
-    return res.status(400).json({
-      error: 'Student identifier required',
-      message: 'Please enter your UMaT student email, 10-digit student ID, or index number.',
+  // One row per student: a repeat sign-up refreshes their details instead of duplicating them on the Dashboard
+  const prior = await db.prepare('SELECT id FROM free_access_signups WHERE email = ? ORDER BY id DESC LIMIT 1').get(email);
+  const statements = [
+    prior
+      ? {
+          sql: 'UPDATE free_access_signups SET name = ?, programme = COALESCE(?, programme), level = COALESCE(?, level), token = ? WHERE id = ?',
+          args: [name, programme || null, level || null, token, prior.id],
+        }
+      : {
+          sql: 'INSERT INTO free_access_signups (name, email, programme, level, token) VALUES (?, ?, ?, ?, ?)',
+          args: [name, email, programme || null, level || null, token],
+        },
+  ];
+  if (!existing) {
+    statements.push({
+      sql: "INSERT INTO access_tokens (token, type, identifier, expires_at) VALUES (?, 'free', ?, ?)",
+      args: [token, email, expiresAt],
     });
   }
-
-  const check = validateUmatStudent(identifier);
-
-  if (!check.isValid) {
-    return res.status(403).json({
-      error: 'Verification Failed',
-      message: check.reason || 'Verification failed. Please check your details and try again or contact Dr. Alhassan Osman.',
-    });
-  }
-
-  // Check if this identifier already has an active token
-  const existing = await db.prepare(`
-    SELECT * FROM access_tokens
-    WHERE identifier = ? AND type = 'umat' AND expires_at > datetime('now')
-  `).get(check.identifier);
-
-  if (existing) {
-    return res.json({
-      token: existing.token,
-      identifier: check.identifier,
-      detectedLabel: check.detectedLabel,
-      message: 'Access granted! Welcome, UMaT student.',
-    });
-  }
-
-  const token = generateToken();
-  const expiresAt = new Date(Date.now() + TOKEN_DURATION_HOURS * 60 * 60 * 1000).toISOString();
-
-  await db.prepare(
-    'INSERT INTO access_tokens (token, type, identifier, expires_at) VALUES (?, ?, ?, ?)'
-  ).run(token, 'umat', check.identifier, expiresAt);
+  await db.batch(statements);
 
   res.json({
     token,
-    identifier: check.identifier,
-    detectedLabel: check.detectedLabel,
-    message: 'Access granted! Welcome, UMaT student.',
+    type: existing ? existing.type : 'free',
+    identifier: email,
+    name,
+    message: `Welcome, ${name.split(' ')[0]}! The free past questions are now open.`,
+  });
+});
+
+// GET /api/access/free-signups — admin: who opened the free past questions
+router.get('/free-signups', authMiddleware, async (req, res) => {
+  const rows = await db
+    .prepare('SELECT id, name, email, programme, level, created_at FROM free_access_signups ORDER BY id DESC LIMIT 500')
+    .all();
+  const total = await db.prepare('SELECT COUNT(*) AS c FROM free_access_signups').get();
+  res.json({ signups: rows, total: total?.c || 0 });
+});
+
+// POST /api/access/verify-student — RETIRED. UMaT students now use the free form or pay like everyone else.
+router.post('/verify-student', (req, res) => {
+  res.status(410).json({
+    error: 'UMaT verification has been retired',
+    message: 'Use "Access Free Past Questions" for free papers, or pay to unlock the paid papers and solutions.',
   });
 });
 
@@ -165,13 +118,20 @@ router.post('/verify-token', async (req, res) => {
 
   if (!token) return res.status(400).json({ valid: false });
 
-  const record = await db.prepare(`
-    SELECT * FROM access_tokens WHERE token = ? AND expires_at > datetime('now')
-  `).get(token);
+  const record = await db.prepare('SELECT type, identifier, expires_at FROM access_tokens WHERE token = ?').get(String(token));
 
-  if (!record) return res.json({ valid: false });
+  // Compare real dates: expires_at is ISO ("…T…Z") while SQLite's datetime('now') uses a space,
+  // so a text comparison would keep a pass alive until the end of its expiry day.
+  if (!record || !(new Date(record.expires_at) > new Date())) return res.json({ valid: false });
 
-  res.json({ valid: true, type: record.type, identifier: record.identifier });
+  res.json({
+    valid: true,
+    type: record.type,
+    identifier: record.identifier,
+    expiresAt: record.expires_at,
+    // What this pass opens — computed by the same rule the download endpoint enforces
+    covers: { free: tokenCoversAccess(record.type, 'free'), paid: tokenCoversAccess(record.type, 'paid') },
+  });
 });
 
 const DEFAULT_PAYSTACK_PUBLIC_KEY = 'pk_live_31edc9824f6209e93c2ec11b860d8899f6400db2';
